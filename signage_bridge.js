@@ -78,6 +78,28 @@ function safeName(name, fallback) {
   return (cleaned || fallback).slice(0, 100);
 }
 
+function canonicalYouTubeUrl(value) {
+  if (typeof value !== "string" || !value) return "";
+
+  try {
+    const url = new URL(value);
+    let videoId = "";
+
+    if (url.hostname.includes("youtu.be")) {
+      videoId = url.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (url.hostname.includes("youtube.com")) {
+      const pathMatch = url.pathname.match(/^\/(?:live|embed|shorts)\/([^/?]+)/);
+      videoId = url.searchParams.get("v") || pathMatch?.[1] || "";
+    }
+
+    return videoId
+      ? `https://www.youtube.com/watch?v=${videoId}`
+      : value;
+  } catch (error) {
+    return value;
+  }
+}
+
 async function listDriveFiles(drive, folderId) {
   const files = [];
   let pageToken;
@@ -172,9 +194,9 @@ function normalizeRemoteState(config, data = {}) {
   const music = config.music || {};
   return {
     mode: modes.has(data.mode) ? data.mode : "wall",
-    liveUrl: typeof data.liveUrl === "string" ? data.liveUrl : "",
+    liveUrl: canonicalYouTubeUrl(data.liveUrl),
     backgroundMusicUrl:
-      typeof data.backgroundMusicUrl === "string" ? data.backgroundMusicUrl : "",
+      canonicalYouTubeUrl(data.backgroundMusicUrl),
     musicEnabled:
       typeof data.musicEnabled === "boolean" ? data.musicEnabled : music.enabled !== false,
     musicVolume: Number.isFinite(data.musicVolume)
@@ -197,7 +219,9 @@ function normalizeSermon(snapshot) {
   if (!sermon) return {};
 
   const videoId = sermon.youtubeVideoId || sermon.videoId || "";
-  const videoUrl = sermon.videoUrl || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : "");
+  const videoUrl = canonicalYouTubeUrl(
+    sermon.videoUrl || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : "")
+  );
   const title = sermon.title || sermon.fullTitle || "Sunday Worship";
   const metaParts = [sermon.speaker, sermon.displayDate].filter(Boolean);
 
