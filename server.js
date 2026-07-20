@@ -91,7 +91,8 @@ const server = http.createServer((req, res) => {
 
     res.writeHead(200, {
       "Content-Type": types[path.extname(filePath).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": cacheControl
+      "Cache-Control": cacheControl,
+      "Referrer-Policy": "origin-when-cross-origin"
     });
     res.end(data);
   });

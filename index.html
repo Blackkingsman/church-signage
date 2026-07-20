@@ -1712,7 +1712,7 @@
 
       const embedUrl = youtubeEmbedUrl(musicContent.url, { autoSound: false, loop: true });
       musicStage.innerHTML = `
-        <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+        <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="origin"></iframe>
       `;
 
       const musicFrame = musicStage.querySelector(".music-frame");
@@ -1726,7 +1726,7 @@
       const embedUrl = youtubeEmbedUrl(liveContent.embedUrl);
       const media = embedUrl
         ? `
-          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="origin" allowfullscreen></iframe>
           <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
             <span class="sound-icon" aria-hidden="true">&#9658;</span>
             <span class="sound-text">
