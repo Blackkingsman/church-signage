@@ -1129,6 +1129,8 @@
     let touchStartX = 0;
     let contentVersion = 0;
     let lastAppliedControl = "";
+    let renderedMusicKey = "";
+    let renderedLiveKey = "";
     function artwork([sky, warm, dark, type], id) {
       const gradId = `g-${id}`;
       const grainId = `grain-${id}`;
@@ -1706,6 +1708,14 @@
     }
 
     function renderBackgroundMusic() {
+      const renderKey = JSON.stringify([
+        musicContent.enabled,
+        musicContent.url,
+        musicContent.volume
+      ]);
+      if (renderKey === renderedMusicKey && musicStage.querySelector(".music-frame")) return;
+      renderedMusicKey = renderKey;
+
       if (!musicContent.enabled || !musicContent.url) {
         musicStage.innerHTML = "";
         return;
@@ -1725,9 +1735,23 @@
     function renderLive() {
       const autoSound = new URLSearchParams(window.location.search).get("sound") === "auto";
       const embedUrl = youtubeEmbedUrl(liveContent.embedUrl);
+      const renderKey = JSON.stringify([
+        embedUrl,
+        autoSound,
+        liveContent.label,
+        liveContent.title,
+        liveContent.body,
+        liveContent.meta
+      ]);
+      if (renderKey === renderedLiveKey && liveStage.querySelector(".live-lobby")) {
+        status.textContent = "Live view";
+        return;
+      }
+      renderedLiveKey = renderKey;
+
       const media = embedUrl
         ? `
-          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="origin" allowfullscreen></iframe>
+          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="origin"></iframe>
           <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
             <span class="sound-icon" aria-hidden="true">&#9658;</span>
             <span class="sound-text">
