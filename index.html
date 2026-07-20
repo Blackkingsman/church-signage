@@ -1653,7 +1653,8 @@
           return `https://www.youtube.com/embed/${id}?${params.toString()}`;
         }
         if (url.hostname.includes("youtube.com")) {
-          const videoId = url.searchParams.get("v");
+          const pathMatch = url.pathname.match(/^\/(?:live|embed|shorts)\/([^/?]+)/);
+          const videoId = url.searchParams.get("v") || pathMatch?.[1];
           if (videoId) {
             if (options.loop) params.set("playlist", videoId);
             return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
