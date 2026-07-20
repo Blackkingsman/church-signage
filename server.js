@@ -92,7 +92,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {
       "Content-Type": types[path.extname(filePath).toLowerCase()] || "application/octet-stream",
       "Cache-Control": cacheControl,
-      "Referrer-Policy": "no-referrer-when-downgrade"
+      "Referrer-Policy": "strict-origin-when-cross-origin"
     });
     res.end(data);
   });

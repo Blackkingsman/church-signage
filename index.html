@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="referrer" content="no-referrer-when-downgrade" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Polaroid Memory Wall</title>
   <style>
     :root {
@@ -1648,7 +1648,8 @@
           loop: options.loop ? "1" : "0",
           rel: "0",
           modestbranding: "1",
-          origin: window.location.origin
+          origin: window.location.origin,
+          widget_referrer: window.location.href.split("#")[0]
         });
         if (url.hostname.includes("youtu.be")) {
           const id = url.pathname.slice(1);
@@ -1724,7 +1725,7 @@
 
       const embedUrl = youtubeEmbedUrl(musicContent.url, { autoSound: false, loop: true });
       musicStage.innerHTML = `
-        <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe>
       `;
 
       const musicFrame = musicStage.querySelector(".music-frame");
@@ -1752,7 +1753,7 @@
 
       const media = embedUrl
         ? `
-          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="no-referrer-when-downgrade"></iframe>
+          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
           <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
             <span class="sound-icon" aria-hidden="true">&#9658;</span>
             <span class="sound-text">
