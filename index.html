@@ -129,19 +129,16 @@
         scale(calc(var(--scale) * .92));
       transform-origin: center;
       opacity: 0;
-      filter: blur(7px);
       transition:
-        opacity 1.5s cubic-bezier(.22,.75,.25,1),
-        transform 1.5s cubic-bezier(.22,.75,.25,1),
-        filter 1.4s ease,
+        opacity .5s ease,
+        transform .5s cubic-bezier(.22,.75,.25,1),
         box-shadow .6s ease;
-      will-change: transform, opacity, filter;
+      will-change: transform, opacity;
       border-radius: 2px;
     }
 
     .polaroid.visible {
       opacity: 1;
-      filter: blur(0);
       transform:
         translate(var(--float-x), var(--float-y))
         rotate(var(--rotate))
@@ -150,7 +147,6 @@
 
     .polaroid.leaving {
       opacity: 0;
-      filter: blur(5px);
       transform:
         translate(calc(var(--float-x) + 8px), calc(var(--float-y) - 12px))
         rotate(calc(var(--rotate) + 1.8deg))
@@ -1508,18 +1504,41 @@
       return el;
     }
 
+    async function waitForCardImage(el) {
+      const image = el.querySelector("img");
+      if (!image) return;
+
+      if (!image.complete) {
+        await new Promise(resolve => {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", resolve, { once: true });
+        });
+      }
+
+      if (image.naturalWidth && typeof image.decode === "function") {
+        await image.decode().catch(() => {});
+      }
+    }
+
+    function revealCardWhenReady(el, delay = 0) {
+      waitForCardImage(el).then(() => {
+        setTimeout(() => {
+          if (!elements.includes(el)) return;
+          el.classList.remove("leaving");
+          el.classList.add("visible");
+        }, delay);
+      });
+    }
+
     function revealCards() {
       const order = elements
         .map((_, index) => index)
         .sort((a, b) => pseudoRandom(a, 41) - pseudoRandom(b, 41));
 
       order.forEach((index, sequence) => {
-        setTimeout(() => {
-          const el = elements[index];
-          if (!el) return;
-          el.classList.remove("leaving");
-          el.classList.add("visible");
-        }, 250 + sequence * 85);
+        const el = elements[index];
+        if (!el) return;
+        revealCardWhenReady(el, 120 + sequence * 55);
       });
     }
 
@@ -1561,12 +1580,9 @@
           photoRenderId++;
           const id = photoRenderId;
           setCardPhoto(el, photo, id);
-          requestAnimationFrame(() => {
-            el.classList.remove("leaving");
-            el.classList.add("visible");
-          });
+          revealCardWhenReady(el);
         });
-      }, 1250);
+      }, 550);
     }
 
     function startTimers() {
