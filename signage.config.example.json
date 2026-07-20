@@ -1,0 +1,31 @@
+{
+  "serviceAccountKey": "./serviceAccountKey.json",
+  "firestore": {
+    "signageCollection": "appContent",
+    "signageDocument": "signage",
+    "sermonsCollection": "sermons",
+    "useLatestSermon": true,
+    "sermonOrderBy": "scheduledStart",
+    "sermonQueryLimit": 20
+  },
+  "drive": {
+    "photosFolderId": "PASTE_PHOTOS_FOLDER_ID_HERE",
+    "photoSlidesFolderId": "PASTE_PHOTO_SLIDES_FOLDER_ID_HERE",
+    "slidesFolderId": "PASTE_SLIDES_FOLDER_ID_HERE",
+    "syncSeconds": 300
+  },
+  "wall": {
+    "eyebrow": "Community moments",
+    "title": "Our week together"
+  },
+  "live": {
+    "label": "Live now",
+    "title": "Join us inside.",
+    "body": "The service is underway. Come in whenever you are ready, or watch here for a moment.",
+    "meta": "You are welcome here"
+  },
+  "music": {
+    "enabled": true,
+    "volume": 55
+  }
+}

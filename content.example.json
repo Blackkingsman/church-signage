@@ -1,0 +1,42 @@
+{
+  "wall": {
+    "eyebrow": "Community moments",
+    "title": "Our week together"
+  },
+  "photos": [
+    {
+      "caption": "Sunday worship",
+      "driveId": "GOOGLE_DRIVE_FILE_ID_FOR_A_PHOTO"
+    },
+    {
+      "caption": "Community lunch",
+      "image": "https://example.com/photo.jpg"
+    }
+  ],
+  "slides": [
+    {
+      "caption": "Welcome and service times",
+      "driveId": "GOOGLE_DRIVE_FILE_ID_FOR_SLIDE_1"
+    },
+    {
+      "caption": "Serve day announcement",
+      "driveId": "GOOGLE_DRIVE_FILE_ID_FOR_SLIDE_2"
+    },
+    {
+      "caption": "Prayer night announcement",
+      "image": "https://example.com/slide-3.png"
+    }
+  ],
+  "live": {
+    "embedUrl": "https://www.youtube.com/watch?v=YOUTUBE_VIDEO_ID",
+    "label": "Live now",
+    "title": "Join us inside.",
+    "body": "The service is underway. Come in whenever you are ready, or watch here for a moment.",
+    "meta": "You are welcome here"
+  },
+  "music": {
+    "url": "https://www.youtube.com/watch?v=rtgVcSu7IY8",
+    "enabled": true,
+    "volume": 55
+  }
+}

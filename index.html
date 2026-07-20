@@ -1,0 +1,2006 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polaroid Memory Wall</title>
+  <style>
+    :root {
+      --bg-1: #efe9df;
+      --bg-2: #d8cec1;
+      --ink: #2b2926;
+      --paper: #fffdf8;
+      --shadow: rgba(42, 35, 28, 0.22);
+      --accent: #8e6f55;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(255,255,255,.75), transparent 24%),
+        radial-gradient(circle at 80% 85%, rgba(255,255,255,.45), transparent 30%),
+        linear-gradient(135deg, var(--bg-1), var(--bg-2));
+      color: var(--ink);
+      font-family: Inter, Arial, Helvetica, sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      opacity: .18;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(86, 70, 54, .08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(86, 70, 54, .08) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.9), transparent);
+    }
+
+    body:not([data-mode="wall"])::before {
+      opacity: 0;
+    }
+
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .wall {
+      position: absolute;
+      inset: 0;
+    }
+
+    .wall-copy {
+      position: absolute;
+      left: clamp(24px, 4vw, 72px);
+      bottom: clamp(24px, 5vh, 72px);
+      z-index: 80;
+      max-width: min(34rem, 72vw);
+      padding: 16px 20px 17px;
+      color: #fffdf8;
+      background: rgba(35, 31, 27, .78);
+      border-left: 4px solid #efc86f;
+      box-shadow: 0 16px 34px rgba(42,35,28,.2);
+      backdrop-filter: blur(14px);
+    }
+
+    .wall-copy p,
+    .wall-copy h1 {
+      margin: 0;
+    }
+
+    .wall-copy p {
+      margin-bottom: 5px;
+      color: rgba(255,253,248,.68);
+      font-size: clamp(.68rem, .85vw, .82rem);
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .wall-copy h1 {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(1.55rem, 2.6vw, 2.7rem);
+      font-weight: 500;
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .view {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .55s ease;
+    }
+
+    .view.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .polaroid {
+      --rotate: 0deg;
+      --scale: 1;
+      --float-x: 0px;
+      --float-y: 0px;
+      --card-w: 180px;
+
+      position: absolute;
+      width: var(--card-w);
+      padding: 10px 10px 14px;
+      background: linear-gradient(145deg, #ffffff, var(--paper));
+      border: 1px solid rgba(75, 60, 45, .08);
+      box-shadow:
+        0 18px 35px var(--shadow),
+        0 3px 8px rgba(42,35,28,.12);
+      transform:
+        translate(var(--float-x), var(--float-y))
+        rotate(var(--rotate))
+        scale(calc(var(--scale) * .92));
+      transform-origin: center;
+      opacity: 0;
+      filter: blur(7px);
+      transition:
+        opacity 1.5s cubic-bezier(.22,.75,.25,1),
+        transform 1.5s cubic-bezier(.22,.75,.25,1),
+        filter 1.4s ease,
+        box-shadow .6s ease;
+      will-change: transform, opacity, filter;
+      border-radius: 2px;
+    }
+
+    .polaroid.visible {
+      opacity: 1;
+      filter: blur(0);
+      transform:
+        translate(var(--float-x), var(--float-y))
+        rotate(var(--rotate))
+        scale(var(--scale));
+    }
+
+    .polaroid.leaving {
+      opacity: 0;
+      filter: blur(5px);
+      transform:
+        translate(calc(var(--float-x) + 8px), calc(var(--float-y) - 12px))
+        rotate(calc(var(--rotate) + 1.8deg))
+        scale(calc(var(--scale) * .94));
+    }
+
+    .polaroid:hover {
+      z-index: 100 !important;
+      box-shadow:
+        0 26px 48px rgba(42,35,28,.28),
+        0 8px 18px rgba(42,35,28,.14);
+    }
+
+    .photo-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 99 / 62;
+      overflow: hidden;
+      background: #ddd;
+    }
+
+    .photo-frame::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(120deg, rgba(255,255,255,.16), transparent 28%),
+        linear-gradient(to top, rgba(22,18,14,.22), transparent 34%);
+      mix-blend-mode: screen;
+    }
+
+    .photo-frame svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .photo-frame img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .tape {
+      position: absolute;
+      top: -16px;
+      left: 50%;
+      width: 74px;
+      height: 28px;
+      transform: translateX(-50%) rotate(-2deg);
+      background: rgba(238, 218, 167, .67);
+      box-shadow: 0 2px 3px rgba(70,55,40,.08);
+      backdrop-filter: blur(2px);
+      z-index: 3;
+    }
+
+    .glow {
+      position: absolute;
+      width: 38vw;
+      height: 38vw;
+      max-width: 520px;
+      max-height: 520px;
+      border-radius: 50%;
+      filter: blur(42px);
+      opacity: .12;
+      pointer-events: none;
+      background: #fff6df;
+      animation: driftGlow 16s ease-in-out infinite alternate;
+    }
+
+    .glow.one {
+      right: -10vw;
+      top: -10vh;
+    }
+
+    .glow.two {
+      left: 18vw;
+      bottom: -20vh;
+      animation-delay: -8s;
+    }
+
+    .status {
+      display: none;
+    }
+
+    .mode-switch {
+      display: none;
+    }
+
+    .mode-button,
+    .nav-button {
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: rgba(43,41,38,.64);
+      font: 700 12px/1 Inter, Arial, sans-serif;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .mode-button {
+      min-width: 72px;
+      height: 34px;
+      padding: 0 12px;
+    }
+
+    .mode-button.active {
+      background: rgba(43,41,38,.9);
+      color: #fffdf8;
+      box-shadow: 0 6px 14px rgba(42,35,28,.18);
+    }
+
+    .slide-view,
+    .photo-view,
+    .live-view {
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+
+    .slide-stage,
+    .photo-stage,
+    .live-stage {
+      width: 100%;
+      height: 100%;
+      min-height: 100vh;
+      display: grid;
+      align-items: center;
+    }
+
+    .announcement-slide {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(340px, .95fr);
+      gap: clamp(36px, 6vw, 112px);
+      align-items: center;
+      width: 100%;
+      min-height: 100vh;
+      padding: clamp(56px, 8vh, 110px) clamp(48px, 8vw, 150px);
+      background:
+        linear-gradient(120deg, rgba(255,255,255,.48), transparent 45%),
+        linear-gradient(135deg, var(--bg-1), var(--bg-2));
+    }
+
+    .announcement-copy {
+      max-width: 720px;
+    }
+
+    .slide-label,
+    .live-label {
+      margin: 0 0 1rem;
+      color: var(--accent);
+      font-size: clamp(.85rem, 1vw, 1.08rem);
+      font-weight: 800;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    .slide-title,
+    .live-title {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(4.2rem, 8.4vw, 10.5rem);
+      font-weight: 500;
+      line-height: .95;
+      letter-spacing: 0;
+    }
+
+    .slide-body,
+    .live-body {
+      margin: 1.4rem 0 0;
+      max-width: 58rem;
+      color: rgba(43,41,38,.72);
+      font-size: clamp(1.35rem, 2.2vw, 2.35rem);
+      line-height: 1.35;
+    }
+
+    .slide-meta {
+      margin: 1.8rem 0 0;
+      color: rgba(43,41,38,.58);
+      font-size: clamp(1rem, 1.4vw, 1.35rem);
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .slide-art,
+    .single-photo-card {
+      width: min(100%, 820px);
+      padding: clamp(12px, 1.4vw, 18px);
+      background: linear-gradient(145deg, #ffffff, var(--paper));
+      border: 1px solid rgba(75,60,45,.1);
+      box-shadow: 0 24px 50px rgba(42,35,28,.22);
+    }
+
+    .slide-art .photo-frame,
+    .single-photo-card .photo-frame {
+      aspect-ratio: 99 / 62;
+    }
+
+    .photo-stage {
+      justify-items: center;
+      overflow: hidden;
+      background: #151311;
+    }
+
+    .single-photo-card {
+      width: min(92vw, 1540px);
+      padding: clamp(12px, 1.4vw, 22px);
+      transform: none;
+      box-shadow: 0 34px 80px rgba(0,0,0,.34);
+    }
+
+    .photo-caption {
+      display: none;
+    }
+
+    .fullscreen-photo-slide,
+    .single-photo-show {
+      position: relative;
+      width: 100%;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      padding: clamp(28px, 5vw, 80px);
+      background: #151311;
+    }
+
+    .fullscreen-photo-slide .slide-art {
+      width: min(92vw, 1560px);
+      z-index: 2;
+    }
+
+    .photo-backdrop {
+      position: absolute;
+      inset: -8%;
+      opacity: .32;
+      filter: blur(34px) saturate(1.18);
+      transform: scale(1.08);
+    }
+
+    .photo-backdrop .photo-frame,
+    .photo-backdrop svg,
+    .photo-backdrop img {
+      width: 100%;
+      height: 100%;
+      aspect-ratio: auto;
+    }
+
+    .photo-backdrop svg,
+    .photo-backdrop img {
+      object-fit: cover;
+    }
+
+    .single-photo-show .single-photo-card {
+      position: relative;
+      z-index: 2;
+    }
+
+    .slide-countdown {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      z-index: 1200;
+      width: 100%;
+      height: 3px;
+      transform-origin: left center;
+      background: rgba(43,41,38,.32);
+      animation: slideProgress var(--slide-duration, 9000ms) linear forwards;
+    }
+
+    .photo-view .slide-countdown {
+      --slide-duration: 7000ms;
+      background: rgba(255,253,248,.36);
+    }
+
+    .live-stage {
+      min-height: min(78vh, 840px);
+      overflow: hidden;
+      background: #171412;
+      box-shadow: 0 24px 50px rgba(42,35,28,.28);
+    }
+
+    .live-frame,
+    .live-placeholder {
+      width: 100%;
+      min-height: min(78vh, 840px);
+      border: 0;
+    }
+
+    .live-placeholder {
+      display: grid;
+      place-items: center;
+      padding: clamp(28px, 6vw, 90px);
+      color: #fffdf8;
+      background:
+        linear-gradient(120deg, rgba(255,255,255,.08), transparent 38%),
+        radial-gradient(circle at 80% 20%, rgba(239,200,128,.16), transparent 34%),
+        #171412;
+      text-align: center;
+    }
+
+    .live-dot {
+      display: inline-block;
+      width: .65em;
+      height: .65em;
+      margin-right: .55em;
+      border-radius: 50%;
+      background: #d94838;
+      box-shadow: 0 0 0 8px rgba(217,72,56,.14);
+    }
+
+    .live-view .live-body {
+      color: rgba(255,253,248,.66);
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .slide-screen,
+    .photo-screen {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;
+      background: #050505;
+    }
+
+    .slide-screen > img,
+    .slide-screen > svg,
+    .photo-screen > img,
+    .photo-screen > svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+    }
+
+    .slide-screen > svg,
+    .photo-screen > svg {
+      max-width: none;
+    }
+
+    .photo-screen .photo-backdrop {
+      inset: -5%;
+      opacity: .42;
+      filter: blur(42px) saturate(1.12);
+    }
+
+    .photo-screen .photo-backdrop img,
+    .photo-screen .photo-backdrop svg {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .photo-screen .photo-primary {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
+    }
+
+    .photo-screen .photo-primary img,
+    .photo-screen .photo-primary svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+    }
+
+    .live-stage {
+      min-height: 100vh;
+      box-shadow: none;
+    }
+
+    .live-lobby {
+      width: 100%;
+      height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) minmax(300px, .72fr);
+      gap: clamp(24px, 3vw, 48px);
+      align-items: center;
+      padding: clamp(28px, 4vw, 72px);
+      color: #fffdf8;
+      background:
+        radial-gradient(circle at 85% 20%, rgba(239,200,111,.12), transparent 28%),
+        linear-gradient(115deg, rgba(255,255,255,.055), transparent 38%),
+        #171412;
+    }
+
+    .live-media {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #050505;
+      box-shadow: 0 28px 70px rgba(0,0,0,.42);
+    }
+
+    .live-frame,
+    .live-media-placeholder {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      border: 0;
+    }
+
+    .live-media-placeholder {
+      display: grid;
+      place-items: center;
+      color: rgba(255,253,248,.58);
+      font-size: clamp(1rem, 1.4vw, 1.35rem);
+      font-weight: 700;
+      background:
+        linear-gradient(135deg, rgba(239,200,111,.1), transparent 55%),
+        #090807;
+    }
+
+    .sound-prompt {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: center;
+      max-width: min(420px, calc(100% - 36px));
+      padding: 12px 14px;
+      border: 1px solid rgba(255,253,248,.18);
+      border-radius: 6px;
+      color: #fffdf8;
+      background: rgba(8, 7, 6, .74);
+      box-shadow: 0 16px 36px rgba(0,0,0,.32);
+      backdrop-filter: blur(14px);
+      cursor: pointer;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity .28s ease, transform .28s ease;
+    }
+
+    .sound-prompt.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .sound-icon {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      color: #171412;
+      background: #efc86f;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .sound-text {
+      min-width: 0;
+    }
+
+    .sound-title,
+    .sound-body {
+      margin: 0;
+    }
+
+    .sound-title {
+      font-size: .82rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .sound-body {
+      margin-top: 3px;
+      color: rgba(255,253,248,.68);
+      font-size: .9rem;
+      line-height: 1.3;
+    }
+
+    .live-copy {
+      max-width: 36rem;
+      padding-left: clamp(0px, 1.5vw, 24px);
+    }
+
+    .live-copy .live-label {
+      color: #efc86f;
+      margin-bottom: 1.25rem;
+      font-size: clamp(.78rem, .9vw, .95rem);
+      letter-spacing: .16em;
+    }
+
+    .live-copy .live-title {
+      font-family: Inter, Arial, sans-serif;
+      font-size: clamp(2.35rem, 3.9vw, 4.9rem);
+      font-weight: 850;
+      line-height: 1.02;
+    }
+
+    .live-copy .live-body {
+      margin: 1.25rem 0 0;
+      max-width: 30rem;
+      color: rgba(255,253,248,.66);
+      font-size: clamp(1rem, 1.25vw, 1.28rem);
+      line-height: 1.45;
+      text-align: left;
+    }
+
+    .live-meta {
+      margin: 1.65rem 0 0;
+      color: rgba(255,253,248,.56);
+      font-size: clamp(.82rem, .95vw, 1rem);
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .nav-controls {
+      display: none;
+    }
+
+    .fullscreen-prompt {
+      position: fixed;
+      right: 18px;
+      top: 18px;
+      z-index: 1400;
+      display: block;
+      width: 128px;
+      height: 72px;
+      padding: 0;
+      border: 0;
+      color: transparent;
+      background: transparent;
+      box-shadow: none;
+      opacity: .01;
+      cursor: pointer;
+    }
+
+    .music-prompt {
+      position: fixed;
+      left: 18px;
+      top: 18px;
+      z-index: 1400;
+      display: block;
+      width: 128px;
+      height: 72px;
+      padding: 0;
+      border: 0;
+      color: transparent;
+      background: transparent;
+      box-shadow: none;
+      opacity: .01;
+      cursor: pointer;
+    }
+
+    .music-frame {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      left: -10px;
+      top: -10px;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .nav-button {
+      min-width: 48px;
+      height: 42px;
+      padding: 0 16px;
+      background: rgba(255,253,248,.78);
+      box-shadow: 0 10px 24px rgba(42,35,28,.14);
+      backdrop-filter: blur(14px);
+    }
+
+    .nav-button:hover,
+    .mode-button:hover {
+      color: var(--ink);
+    }
+
+    @keyframes slideProgress {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
+
+    @keyframes driftGlow {
+      from { transform: translate3d(-20px, -10px, 0) scale(.95); }
+      to   { transform: translate3d(30px, 25px, 0) scale(1.08); }
+    }
+
+    @media (max-width: 900px) {
+      .announcement-slide {
+        grid-template-columns: 1fr;
+        padding: clamp(42px, 7vh, 70px) clamp(22px, 7vw, 48px);
+      }
+      .slide-art {
+        width: min(100%, 560px);
+      }
+      .live-lobby {
+        grid-template-columns: 1fr;
+        align-content: center;
+        gap: 28px;
+        padding: 28px;
+      }
+      .live-copy {
+        max-width: none;
+        padding-left: 0;
+      }
+      .live-copy .live-title {
+        font-size: clamp(2.25rem, 8vw, 4.4rem);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .polaroid,
+      .glow {
+        animation: none !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body data-mode="wall">
+  <main class="stage">
+    <div class="glow one"></div>
+    <div class="glow two"></div>
+
+    <nav class="mode-switch" aria-label="Display mode">
+      <button class="mode-button active" type="button" data-mode="wall" aria-pressed="true">Wall</button>
+      <button class="mode-button" type="button" data-mode="slides" aria-pressed="false">Slides</button>
+      <button class="mode-button" type="button" data-mode="photo" aria-pressed="false">Photo</button>
+      <button class="mode-button" type="button" data-mode="live" aria-pressed="false">Live</button>
+    </nav>
+
+    <section class="wall view active" id="wall" aria-label="Animated Polaroid photo wall">
+      <div class="wall-copy" id="heroText">
+        <p id="wallEyebrow">Community moments</p>
+        <h1 id="wallTitle">Our week together</h1>
+      </div>
+    </section>
+    <section class="slide-view view" id="slideView" aria-label="Announcement slides">
+      <div class="slide-stage" id="slideStage"></div>
+    </section>
+    <section class="photo-view view" id="photoView" aria-label="Single photo slideshow">
+      <div class="photo-stage" id="photoStage"></div>
+    </section>
+    <section class="live-view view" id="liveView" aria-label="Live stream">
+      <div class="live-stage" id="liveStage"></div>
+    </section>
+    <div class="nav-controls" aria-label="Slide navigation">
+      <button class="nav-button" type="button" id="prevButton" aria-label="Previous">&larr;</button>
+      <button class="nav-button" type="button" id="nextButton" aria-label="Next">&rarr;</button>
+    </div>
+    <button class="fullscreen-prompt" type="button" id="fullscreenPrompt" aria-label="Toggle fullscreen"></button>
+    <button class="music-prompt" type="button" id="musicPrompt" aria-label="Play background music"></button>
+    <div id="musicStage" aria-hidden="true"></div>
+    <div class="status" id="status">Photo wall &middot; live</div>
+  </main>
+
+  <script>
+    const basePhotoLibrary = [
+      { caption: "Sunday worship", art: ["#7fa7c8", "#e8c486", "#4d6f55", "sunset"] },
+      { caption: "Friends after service", art: ["#d8a8a8", "#efd8b1", "#7b8f67", "people"] },
+      { caption: "A quiet prayer", art: ["#7c879a", "#c9bda6", "#48576d", "window"] },
+      { caption: "Serving together", art: ["#91a97f", "#f0c77b", "#6e6759", "tables"] },
+      { caption: "Welcome home", art: ["#d59e73", "#f4ddb4", "#7b5848", "building"] },
+      { caption: "Faith in every season", art: ["#8fb2a4", "#e7d7ae", "#586a61", "hills"] },
+      { caption: "Small group night", art: ["#9d87b5", "#f0c2a0", "#594d69", "lights"] },
+      { caption: "Community day", art: ["#72a7b5", "#f3d585", "#4d716f", "field"] },
+      { caption: "One family", art: ["#c69a7c", "#f4deb7", "#746056", "people"] },
+      { caption: "Growing in faith", art: ["#87a6a1", "#ecd6aa", "#556b65", "hills"] },
+      { caption: "Worship team", art: ["#7e8fb2", "#e5bd92", "#4b5063", "lights"] },
+      { caption: "Coffee and conversation", art: ["#ad8b6f", "#ead1aa", "#66564b", "tables"] },
+      { caption: "Sunday smiles", art: ["#c98e86", "#f2d0a2", "#76554f", "people"] },
+      { caption: "A place to belong", art: ["#9eb98e", "#edd49d", "#617157", "building"] },
+      { caption: "Prayer changes things", art: ["#7d8ca5", "#dcc4a9", "#4e586c", "window"] },
+      { caption: "Together in worship", art: ["#779aa8", "#efc880", "#4d686f", "sunset"] },
+      { caption: "Community outreach", art: ["#8ba77b", "#efcf8d", "#5c6e57", "field"] },
+      { caption: "Memories worth keeping", art: ["#b49379", "#ead3b0", "#6e5e53", "people"] }
+    ];
+
+    const PHOTO_POOL_SIZE = 180;
+    const ROTATION_MS = 8000;
+    const SMALL_RESERVE_ROTATION_MS = 11000;
+    const SINGLE_RESERVE_ROTATION_MS = 15000;
+    const RECENT_SWAP_COOLDOWN = 4;
+    const CARD_PAD_X = 10;
+    const CARD_PAD_TOP = 10;
+    const CARD_PAD_BOTTOM = 14;
+    const MAX_ROTATION = 4.2;
+    const MAX_SCALE = 1.035;
+    const DRIFT_X = 5;
+    const DRIFT_Y = 4;
+    const HEADER_SAFE_GAP = 34;
+    const MIN_CARD_WIDTH_DESKTOP = 340;
+    const MIN_CARD_WIDTH_MOBILE = 190;
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function adjustHex(hex, amount) {
+      const value = hex.replace("#", "");
+      const channels = [0, 2, 4].map(offset => {
+        const next = parseInt(value.slice(offset, offset + 2), 16) + amount;
+        return clamp(Math.round(next), 0, 255).toString(16).padStart(2, "0");
+      });
+      return `#${channels.join("")}`;
+    }
+
+    function buildPhotoPool(size) {
+      return Array.from({ length: size }, (_, index) => {
+        const base = basePhotoLibrary[index % basePhotoLibrary.length];
+        const generation = Math.floor(index / basePhotoLibrary.length);
+        const shift = ((index * 17) % 33) - 16;
+        return {
+          caption: generation === 0 ? base.caption : `${base.caption} ${generation + 1}`,
+          art: [
+            adjustHex(base.art[0], shift),
+            adjustHex(base.art[1], -shift * 0.45),
+            adjustHex(base.art[2], shift * 0.35),
+            base.art[3]
+          ]
+        };
+      });
+    }
+
+    let photoLibrary = buildPhotoPool(PHOTO_POOL_SIZE);
+    let photoSlideDeck = buildPhotoPool(PHOTO_POOL_SIZE);
+    let wallContent = {
+      eyebrow: "Community moments",
+      title: "Our week together"
+    };
+    let liveContent = {
+      embedUrl: "https://www.youtube.com/watch?v=_QqFhkOcljI",
+      label: "Live now",
+      title: "Join us inside.",
+      body: "The service is underway. Come in whenever you are ready, or watch here for a moment.",
+      meta: "You are welcome here"
+    };
+    let musicContent = {
+      url: "https://www.youtube.com/watch?v=rtgVcSu7IY8",
+      enabled: true,
+      volume: 55
+    };
+
+    let slideDeck = [
+      {
+        caption: "Welcome slide",
+        artIndex: 4
+      },
+      {
+        caption: "Serve day slide",
+        artIndex: 16
+      },
+      {
+        caption: "This week slide",
+        artIndex: 1
+      }
+    ];
+
+    function cardHeight(width) {
+      return CARD_PAD_TOP + ((width - CARD_PAD_X * 2) * (62 / 99)) + CARD_PAD_BOTTOM;
+    }
+
+    function rotatedBounds(width, height, degrees, scale = MAX_SCALE) {
+      const radians = Math.abs(degrees) * Math.PI / 180;
+      const sin = Math.sin(radians);
+      const cos = Math.cos(radians);
+      return {
+        width: ((width * cos) + (height * sin)) * scale + DRIFT_X * 2,
+        height: ((width * sin) + (height * cos)) * scale + DRIFT_Y * 2
+      };
+    }
+
+    function maxWidthForCell(cellW, cellH, maxWidth) {
+      let low = 80;
+      let high = maxWidth;
+
+      for (let i = 0; i < 24; i++) {
+        const mid = (low + high) / 2;
+        const bounds = rotatedBounds(mid, cardHeight(mid), MAX_ROTATION);
+
+        if (bounds.width <= cellW && bounds.height <= cellH) {
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+
+      return low;
+    }
+
+    function targetCardCount(vw, vh, photoCount = PHOTO_POOL_SIZE) {
+      const area = vw * vh;
+      const count = Math.round(area / 82000);
+      const defaultTarget = clamp(count, vw < 620 ? 7 : 12, area > 7200000 ? 48 : 36);
+      if (photoCount <= 0) return defaultTarget;
+      return Math.min(photoCount, defaultTarget);
+    }
+
+    function expandRect(rect, gap, vw, vh) {
+      return {
+        left: clamp(rect.left - gap, 0, vw),
+        top: clamp(rect.top - gap, 0, vh),
+        right: clamp(rect.right + gap, 0, vw),
+        bottom: clamp(rect.bottom + gap, 0, vh)
+      };
+    }
+
+    function getReservedAreas(vw, vh) {
+      if (!heroText || typeof heroText.getBoundingClientRect !== "function") return [];
+
+      const rect = heroText.getBoundingClientRect();
+      const gap = clamp(Math.min(vw, vh) * 0.035, 22, HEADER_SAFE_GAP);
+      return [expandRect(rect, gap, vw, vh)];
+    }
+
+    function intersects(a, b) {
+      return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    }
+
+    function cardBounds(slot, width) {
+      const bounds = rotatedBounds(width, cardHeight(width), Math.abs(slot.r), slot.s);
+      return {
+        left: slot.x - bounds.width / 2,
+        top: slot.y - bounds.height / 2,
+        right: slot.x + bounds.width / 2,
+        bottom: slot.y + bounds.height / 2
+      };
+    }
+
+    function solveLayout() {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const area = vw * vh;
+      const realPhotoCount = photoLibrary.filter(photo => photoSource(photo)).length;
+      const visiblePhotoCount = realPhotoCount || photoLibrary.length;
+      const target = targetCardCount(vw, vh, visiblePhotoCount);
+      const padX = clamp(vw * 0.035, 18, 78);
+      const padY = clamp(vh * 0.05, 24, 78);
+      const gap = clamp(Math.min(vw, vh) * 0.018, 10, 28);
+      const usableW = vw - padX * 2;
+      const usableH = vh - padY * 2;
+      const smallRealPool = realPhotoCount > 0 && realPhotoCount <= 18;
+      const responsiveMinWidth = smallRealPool
+        ? clamp(Math.sqrt(area) / 5.7, vw < 620 ? 150 : 190, 310)
+        : clamp(Math.sqrt(area) / 6.5, vw < 620 ? 124 : 166, 255);
+      const minWidth = Math.max(
+        vw < 620 ? MIN_CARD_WIDTH_MOBILE : MIN_CARD_WIDTH_DESKTOP,
+        responsiveMinWidth
+      );
+      const maxWidth = smallRealPool
+        ? Math.max(minWidth, clamp(Math.sqrt(area) / 3.7, 240, 430))
+        : Math.max(minWidth, clamp(Math.sqrt(area) / 4.35, 198, 350));
+      const reservedAreas = getReservedAreas(vw, vh);
+      let best = null;
+
+      for (let rows = 1; rows <= 9; rows++) {
+        for (let cols = 1; cols <= 14; cols++) {
+          const gridCount = rows * cols;
+          if (gridCount > target + 8) continue;
+
+          const cellW = (usableW - gap * (cols - 1)) / cols;
+          const cellH = (usableH - gap * (rows - 1)) / rows;
+          const width = maxWidthForCell(cellW, cellH, maxWidth);
+
+          if (width < minWidth) continue;
+
+          const slots = buildSlots({
+            rows,
+            cols,
+            count: gridCount,
+            width,
+            padX,
+            padY,
+            gap,
+            usableW,
+            usableH,
+            reservedAreas
+          });
+          const count = slots.length;
+          if (!count || count > target) continue;
+
+          const score = count * 10000 + width;
+          if (!best || score > best.score) {
+            best = { rows, cols, count: gridCount, width, padX, padY, gap, usableW, usableH, reservedAreas, score };
+          }
+        }
+      }
+
+      if (best) return best;
+
+      const fallbackCols = vw < 620 ? 2 : 3;
+      const fallbackRows = vw < 620 ? 4 : 3;
+      const cellW = (usableW - gap * (fallbackCols - 1)) / fallbackCols;
+      const cellH = (usableH - gap * (fallbackRows - 1)) / fallbackRows;
+
+      return {
+        rows: fallbackRows,
+        cols: fallbackCols,
+        count: fallbackRows * fallbackCols,
+        width: maxWidthForCell(cellW, cellH, maxWidth),
+        padX,
+        padY,
+        gap,
+        usableW,
+        usableH,
+        reservedAreas
+      };
+    }
+
+    function pseudoRandom(index, salt) {
+      const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+      return value - Math.floor(value);
+    }
+
+    function buildSlots(layout) {
+      const { cols, count, width, padX, padY, gap, usableW, usableH, reservedAreas = [] } = layout;
+      const cellW = (usableW - gap * (cols - 1)) / cols;
+      const rows = Math.ceil(count / cols);
+      const cellH = (usableH - gap * (rows - 1)) / rows;
+      const baseBounds = rotatedBounds(width, cardHeight(width), MAX_ROTATION);
+      const jitterXMax = Math.max(0, (cellW - baseBounds.width) / 2);
+      const jitterYMax = Math.max(0, (cellH - baseBounds.height) / 2);
+      const slots = [];
+
+      for (let i = 0; i < count; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const jitterX = (pseudoRandom(i, 3) * 2 - 1) * jitterXMax;
+        const jitterY = (pseudoRandom(i, 8) * 2 - 1) * jitterYMax;
+
+        const slot = {
+          x: padX + col * (cellW + gap) + cellW / 2 + jitterX,
+          y: padY + row * (cellH + gap) + cellH / 2 + jitterY,
+          r: (pseudoRandom(i, 11) * 2 - 1) * MAX_ROTATION,
+          s: 0.975 + pseudoRandom(i, 19) * 0.045,
+          z: 2 + (i % 7)
+        };
+
+        if (reservedAreas.some(area => intersects(cardBounds(slot, width), area))) continue;
+        slots.push(slot);
+      }
+
+      return slots;
+    }
+
+    const wall = document.getElementById("wall");
+    const status = document.getElementById("status");
+    const heroText = document.getElementById("heroText");
+    const modeButtons = [...document.querySelectorAll(".mode-button")];
+    const views = {
+      wall,
+      slides: document.getElementById("slideView"),
+      photo: document.getElementById("photoView"),
+      live: document.getElementById("liveView")
+    };
+    const slideStage = document.getElementById("slideStage");
+    const photoStage = document.getElementById("photoStage");
+    const liveStage = document.getElementById("liveStage");
+    const prevButton = document.getElementById("prevButton");
+    const nextButton = document.getElementById("nextButton");
+    const fullscreenPrompt = document.getElementById("fullscreenPrompt");
+    const musicPrompt = document.getElementById("musicPrompt");
+    const musicStage = document.getElementById("musicStage");
+    let elements = [];
+    let wallSlots = [];
+    let wallCardWidth = 0;
+    let photoDrawBag = [];
+    let photoDrawCursor = 0;
+    let photoRenderId = 0;
+    let wallSwapRound = 0;
+    let musicMuted = true;
+    let rotationTimer = null;
+    let driftTimer = null;
+    let resizeTimer = null;
+    let activeMode = "wall";
+    let slideIndex = 0;
+    let singlePhotoIndex = 0;
+    let modeTimer = null;
+    let touchStartX = 0;
+    let contentVersion = 0;
+    let lastAppliedControl = "";
+    function artwork([sky, warm, dark, type], id) {
+      const gradId = `g-${id}`;
+      const grainId = `grain-${id}`;
+
+      const figures = type === "people"
+        ? `
+          <g opacity=".95">
+            <circle cx="125" cy="155" r="26" fill="${warm}"/>
+            <rect x="98" y="180" width="54" height="72" rx="25" fill="${dark}"/>
+            <circle cx="225" cy="145" r="24" fill="#f1c7a2"/>
+            <rect x="198" y="168" width="55" height="84" rx="25" fill="#6e7f98"/>
+            <circle cx="320" cy="160" r="25" fill="#c98f6a"/>
+            <rect x="292" y="184" width="58" height="68" rx="25" fill="#7e5e55"/>
+          </g>`
+        : type === "window"
+        ? `
+          <rect x="100" y="52" width="240" height="178" rx="4" fill="rgba(255,255,255,.18)" stroke="rgba(255,255,255,.45)" stroke-width="7"/>
+          <line x1="220" y1="52" x2="220" y2="230" stroke="rgba(255,255,255,.42)" stroke-width="6"/>
+          <line x1="100" y1="140" x2="340" y2="140" stroke="rgba(255,255,255,.42)" stroke-width="6"/>
+          <circle cx="220" cy="172" r="22" fill="${warm}"/>
+          <path d="M185 252 Q220 205 255 252" fill="${dark}"/>`
+        : type === "building"
+        ? `
+          <rect x="82" y="112" width="276" height="145" fill="${warm}" opacity=".92"/>
+          <path d="M60 125 L220 45 L380 125 Z" fill="${dark}"/>
+          <rect x="190" y="170" width="60" height="87" fill="#6b5143"/>
+          <rect x="112" y="155" width="45" height="38" fill="#dce8ea"/>
+          <rect x="284" y="155" width="45" height="38" fill="#dce8ea"/>
+          <line x1="220" y1="62" x2="220" y2="104" stroke="${warm}" stroke-width="7"/>
+          <line x1="205" y1="78" x2="235" y2="78" stroke="${warm}" stroke-width="7"/>`
+        : type === "tables"
+        ? `
+          <ellipse cx="145" cy="210" rx="105" ry="30" fill="${warm}"/>
+          <rect x="132" y="210" width="26" height="55" fill="${dark}"/>
+          <ellipse cx="320" cy="195" rx="88" ry="26" fill="#e9d1a2"/>
+          <rect x="308" y="195" width="24" height="62" fill="${dark}"/>
+          <circle cx="110" cy="150" r="20" fill="#d8a075"/>
+          <circle cx="175" cy="145" r="21" fill="#b97d59"/>
+          <circle cx="290" cy="140" r="20" fill="#e0aa81"/>
+          <circle cx="350" cy="147" r="20" fill="#8f5f4a"/>`
+        : type === "lights"
+        ? `
+          <g fill="${warm}">
+            <circle cx="80" cy="70" r="12"/><circle cx="155" cy="95" r="9"/>
+            <circle cx="235" cy="62" r="13"/><circle cx="330" cy="100" r="10"/>
+            <circle cx="385" cy="65" r="8"/>
+          </g>
+          <g stroke="rgba(255,255,255,.5)" stroke-width="3">
+            <path d="M10 55 Q110 15 215 68 T430 50" fill="none"/>
+          </g>
+          <rect y="190" width="440" height="90" fill="${dark}" opacity=".5"/>`
+        : type === "field"
+        ? `
+          <path d="M0 165 Q90 120 180 165 T440 150 V280 H0 Z" fill="${dark}"/>
+          <path d="M0 205 Q130 150 260 205 T440 188 V280 H0 Z" fill="${warm}" opacity=".72"/>
+          <circle cx="330" cy="85" r="38" fill="#ffe7a6" opacity=".92"/>`
+        : type === "hills"
+        ? `
+          <path d="M0 190 Q105 78 210 190 T440 175 V280 H0 Z" fill="${dark}" opacity=".85"/>
+          <path d="M0 220 Q95 135 190 220 T440 202 V280 H0 Z" fill="${warm}" opacity=".7"/>
+          <circle cx="350" cy="70" r="33" fill="#f9e1a4"/>`
+        : `
+          <circle cx="345" cy="75" r="42" fill="#ffe29b"/>
+          <path d="M0 175 Q120 105 225 172 T440 150 V280 H0 Z" fill="${dark}"/>
+          <path d="M0 215 Q95 170 205 215 T440 198 V280 H0 Z" fill="${warm}" opacity=".74"/>`;
+
+      return `
+        <svg viewBox="0 0 440 280" role="img" aria-label="Decorative sample image">
+          <defs>
+            <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${sky}"/>
+              <stop offset="100%" stop-color="${warm}"/>
+            </linearGradient>
+            <filter id="${grainId}">
+              <feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="2" seed="${id}"/>
+              <feColorMatrix type="saturate" values="0"/>
+              <feComponentTransfer><feFuncA type="table" tableValues="0 .06"/></feComponentTransfer>
+            </filter>
+          </defs>
+          <rect width="440" height="280" fill="url(#${gradId})"/>
+          ${figures}
+          <rect width="440" height="280" filter="url(#${grainId})" opacity=".7"/>
+        </svg>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;"
+      }[character]));
+    }
+
+    function driveImageUrl(id) {
+      return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`;
+    }
+
+    function photoSource(photo) {
+      if (photo.image || photo.url) return photo.image || photo.url;
+      return photo.driveId ? driveImageUrl(photo.driveId) : "";
+    }
+
+    function photoFrameMarkup(photo, id) {
+      const src = photoSource(photo);
+      if (src) {
+        return `<img src="${escapeHtml(src)}" alt="${escapeHtml(photo.caption || "Church photo")}" loading="eager">`;
+      }
+      return artwork(photo.art, id);
+    }
+
+    function normalizePhoto(item, index) {
+      if (typeof item === "string") {
+        return { caption: `Photo ${index + 1}`, image: item, key: item };
+      }
+
+      const image = item.image || item.url || "";
+      const driveId = item.driveId || "";
+      return {
+        caption: item.caption || item.title || `Photo ${index + 1}`,
+        image,
+        driveId,
+        key: driveId || image || item.caption || `photo-${index}`,
+        art: item.art || basePhotoLibrary[index % basePhotoLibrary.length].art
+      };
+    }
+
+    function uniquePhotos(photos) {
+      const seen = new Set();
+      return photos.filter(photo => {
+        const key = photoKey(photo);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function normalizeSlide(item, index) {
+      if (typeof item === "string") {
+        return { caption: `Slide ${index + 1}`, image: item, artIndex: index };
+      }
+
+      return {
+        caption: item.caption || item.title || `Slide ${index + 1}`,
+        image: item.image || item.url || "",
+        driveId: item.driveId || "",
+        artIndex: Number.isFinite(item.artIndex) ? item.artIndex : index
+      };
+    }
+
+    async function loadContentManifest() {
+      try {
+        const response = await fetch("content.json", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const content = await response.json();
+        const manifestPhotos = Array.isArray(content.photos)
+          ? content.photos.map(normalizePhoto).filter(photo => photoSource(photo) || photo.art)
+          : [];
+        const manifestPhotoSlides = Array.isArray(content.photoSlides)
+          ? content.photoSlides.map(normalizePhoto).filter(photo => photoSource(photo) || photo.art)
+          : [];
+        const manifestSlides = Array.isArray(content.slides)
+          ? content.slides.map(normalizeSlide).filter(slide => photoSource(slide) || Number.isFinite(slide.artIndex))
+          : [];
+
+        if (manifestPhotos.length) {
+          photoLibrary = uniquePhotos(manifestPhotos);
+          resetPhotoDrawBag();
+          singlePhotoIndex = 0;
+        }
+
+        photoSlideDeck = manifestPhotoSlides.length
+          ? uniquePhotos(manifestPhotoSlides)
+          : photoLibrary;
+
+        if (manifestSlides.length) {
+          slideDeck = manifestSlides;
+          slideIndex = 0;
+        }
+
+        if (content.wall && typeof content.wall === "object") {
+          wallContent = {
+            eyebrow: content.wall.eyebrow || wallContent.eyebrow,
+            title: content.wall.title || wallContent.title
+          };
+          document.getElementById("wallEyebrow").textContent = wallContent.eyebrow;
+          document.getElementById("wallTitle").textContent = wallContent.title;
+        }
+
+        if (content.live && typeof content.live === "object") {
+          liveContent = {
+            embedUrl: content.live.embedUrl || content.live.url || "",
+            label: content.live.label || liveContent.label,
+            title: content.live.title || liveContent.title,
+            body: content.live.body || liveContent.body,
+            meta: content.live.meta || liveContent.meta
+          };
+        }
+
+        if (content.music && typeof content.music === "object") {
+          musicContent = {
+            url: content.music.url || content.music.embedUrl || musicContent.url,
+            enabled: content.music.enabled !== false,
+            volume: Number.isFinite(content.music.volume) ? content.music.volume : musicContent.volume
+          };
+          renderBackgroundMusic();
+        }
+
+        rebuildWall();
+        renderSlide();
+        renderSinglePhoto();
+        renderLive();
+        if (activeMode === "wall") {
+          status.textContent = `${elements.length} on wall \u00b7 ${photoLibrary.length} loaded`;
+        }
+      } catch (error) {
+        console.info("Using built-in sample content.", error);
+      }
+    }
+
+    async function loadDisplayControl() {
+      try {
+        const response = await fetch("control.json", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const control = await response.json();
+        const signature = JSON.stringify(control);
+        if (signature === lastAppliedControl) return;
+        lastAppliedControl = signature;
+
+        if (views[control.mode] && control.mode !== activeMode) {
+          setMode(control.mode);
+          window.history.replaceState(null, "", `#${control.mode}`);
+        }
+
+        if (Number.isFinite(control.slideIndex) && slideDeck.length) {
+          slideIndex = ((Math.floor(control.slideIndex) % slideDeck.length) + slideDeck.length) % slideDeck.length;
+          if (activeMode === "slides") renderSlide();
+        }
+
+        if (Number.isFinite(control.photoIndex) && photoSlideDeck.length) {
+          singlePhotoIndex = ((Math.floor(control.photoIndex) % photoSlideDeck.length) + photoSlideDeck.length) % photoSlideDeck.length;
+          if (activeMode === "photo") renderSinglePhoto();
+        }
+      } catch (error) {
+        // control.json is optional.
+      }
+    }
+
+    async function watchForRemoteUpdates() {
+      try {
+        const response = await fetch("version.json", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const version = await response.json();
+        if (!contentVersion) {
+          contentVersion = version.content;
+          return;
+        }
+
+        if (version.content !== contentVersion) {
+          contentVersion = version.content;
+          await loadContentManifest();
+          await loadDisplayControl();
+        }
+      } catch (error) {
+        // The display keeps running if the local server is temporarily unreachable.
+      }
+    }
+
+    function shuffleIndexes(length) {
+      const indexes = Array.from({ length }, (_, index) => index);
+      for (let index = indexes.length - 1; index > 0; index--) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [indexes[index], indexes[swapIndex]] = [indexes[swapIndex], indexes[index]];
+      }
+      return indexes;
+    }
+
+    function resetPhotoDrawBag() {
+      photoDrawBag = shuffleIndexes(photoLibrary.length);
+      photoDrawCursor = 0;
+    }
+
+    function nextPhoto() {
+      if (!photoDrawBag.length || photoDrawBag.length !== photoLibrary.length || photoDrawCursor >= photoDrawBag.length) {
+        resetPhotoDrawBag();
+      }
+
+      const photoIndex = photoDrawBag[photoDrawCursor] ?? 0;
+      photoDrawCursor++;
+      photoRenderId++;
+      return { photo: photoLibrary[photoIndex], id: photoRenderId };
+    }
+
+    function photoKey(photo) {
+      return photo?.key || photo?.driveId || photoSource(photo) || photo?.caption || "";
+    }
+
+    function visibleWallPhotoKeys(excludeCards = []) {
+      const excluded = new Set(excludeCards);
+      return new Set(elements
+        .filter(el => !excluded.has(el) && !el.classList.contains("leaving"))
+        .map(el => el.dataset.photoKey)
+        .filter(Boolean));
+    }
+
+    function nextUniqueWallPhoto(excludeCards = []) {
+      const visibleKeys = visibleWallPhotoKeys(excludeCards);
+      const availableIndexes = photoLibrary
+        .map((photo, index) => ({ photo, index, key: photoKey(photo) }))
+        .filter(entry => !entry.key || !visibleKeys.has(entry.key));
+
+      if (!availableIndexes.length) return null;
+
+      for (let attempt = 0; attempt < photoLibrary.length * 2; attempt++) {
+        const next = nextPhoto();
+        if (!next.photo) continue;
+        const key = photoKey(next.photo);
+        if (!key || !visibleKeys.has(key)) return next;
+      }
+
+      const picked = availableIndexes[Math.floor(Math.random() * availableIndexes.length)];
+      photoRenderId++;
+      return { photo: picked.photo, id: photoRenderId };
+    }
+
+    function initialWallPhotos(count) {
+      return shuffleIndexes(photoLibrary.length)
+        .slice(0, count)
+        .map(index => {
+          photoRenderId++;
+          return { photo: photoLibrary[index], id: photoRenderId };
+        });
+    }
+
+    function setCardPhoto(el, photo, id) {
+      el.dataset.photoKey = photoKey(photo);
+      el.setAttribute("aria-label", photo.caption);
+      el.innerHTML = `
+        <div class="tape"></div>
+        <div class="photo-frame">${photoFrameMarkup(photo, id)}</div>
+      `;
+    }
+
+    function applySlotToCard(el, slot, slotIndex, width) {
+      el.dataset.slotIndex = slotIndex;
+      el.style.left = `${slot.x}px`;
+      el.style.top = `${slot.y}px`;
+      el.style.zIndex = slot.z;
+      el.style.setProperty("--card-w", `${width}px`);
+      el.style.setProperty("--rotate", `${slot.r}deg`);
+      el.style.setProperty("--scale", slot.s);
+    }
+
+    function makeCard(slot, index, width, assignment) {
+      const { photo, id } = assignment || nextUniqueWallPhoto() || nextPhoto();
+      const el = document.createElement("article");
+      el.className = "polaroid";
+      el.dataset.index = index;
+      el.style.setProperty("--float-x", "-50%");
+      el.style.setProperty("--float-y", "-50%");
+      applySlotToCard(el, slot, index, width);
+      setCardPhoto(el, photo, id);
+      wall.appendChild(el);
+      return el;
+    }
+
+    function revealCards() {
+      const order = elements
+        .map((_, index) => index)
+        .sort((a, b) => pseudoRandom(a, 41) - pseudoRandom(b, 41));
+
+      order.forEach((index, sequence) => {
+        setTimeout(() => {
+          const el = elements[index];
+          if (!el) return;
+          el.classList.remove("leaving");
+          el.classList.add("visible");
+        }, 250 + sequence * 85);
+      });
+    }
+
+    function shuffledCards(cards) {
+      return [...cards].sort(() => Math.random() - 0.5);
+    }
+
+    function rotateWallBatch() {
+      if (!elements.length) return;
+
+      const readyCards = elements.filter(el => el.classList.contains("visible") && !el.classList.contains("leaving"));
+      if (!readyCards.length) return;
+
+      const visibleKeys = visibleWallPhotoKeys();
+      const offscreenPhotos = photoLibrary.filter(photo => !visibleKeys.has(photoKey(photo)));
+      if (!offscreenPhotos.length) return;
+
+      const replaceCount = Math.min(readyCards.length, offscreenPhotos.length, 1 + Math.floor(Math.random() * 3));
+      const cooledCards = readyCards.filter(el => {
+        const lastSwap = Number(el.dataset.lastSwapRound || -Infinity);
+        return wallSwapRound - lastSwap >= RECENT_SWAP_COOLDOWN;
+      });
+      const selectionPool = cooledCards.length >= replaceCount ? cooledCards : readyCards;
+      const selected = shuffledCards(selectionPool).slice(0, replaceCount);
+      const replacements = shuffledCards(offscreenPhotos).slice(0, replaceCount);
+      wallSwapRound++;
+
+      selected.forEach(el => {
+        el.dataset.lastSwapRound = wallSwapRound;
+        el.classList.add("leaving");
+        el.classList.remove("visible");
+      });
+
+      setTimeout(() => {
+        selected.forEach((el, index) => {
+          if (!elements.includes(el)) return;
+          const photo = replacements[index];
+          if (!photo) return;
+          photoRenderId++;
+          const id = photoRenderId;
+          setCardPhoto(el, photo, id);
+          requestAnimationFrame(() => {
+            el.classList.remove("leaving");
+            el.classList.add("visible");
+          });
+        });
+      }, 1250);
+    }
+
+    function startTimers() {
+      clearInterval(rotationTimer);
+      clearInterval(driftTimer);
+
+      const reserveCount = Math.max(0, photoLibrary.length - elements.length);
+      const rotationDelay = reserveCount <= 1
+        ? SINGLE_RESERVE_ROTATION_MS
+        : reserveCount <= 3
+          ? SMALL_RESERVE_ROTATION_MS
+          : ROTATION_MS;
+
+      rotationTimer = setInterval(rotateWallBatch, rotationDelay);
+      driftTimer = setInterval(() => {
+        elements.forEach((el, index) => {
+          if (!el.classList.contains("visible")) return;
+          const driftX = (Math.sin(Date.now() / 7000 + index) * DRIFT_X).toFixed(2);
+          const driftY = (Math.cos(Date.now() / 8500 + index) * DRIFT_Y).toFixed(2);
+          el.style.setProperty("--float-x", `calc(-50% + ${driftX}px)`);
+          el.style.setProperty("--float-y", `calc(-50% + ${driftY}px)`);
+        });
+      }, 1000);
+    }
+
+    function renderSlide() {
+      const slide = slideDeck[slideIndex % slideDeck.length];
+      const fallbackPhoto = photoLibrary[(slide.artIndex ?? slideIndex) % photoLibrary.length];
+      const photo = photoSource(slide) ? slide : fallbackPhoto;
+
+      slideStage.innerHTML = `
+        <article class="slide-screen" aria-label="${escapeHtml(slide.caption || `Slide ${slideIndex + 1}`)}">
+          ${photoFrameMarkup(photo, 3000 + slideIndex)}
+          <div class="slide-countdown"></div>
+        </article>
+      `;
+      status.textContent = `Slide ${slideIndex + 1} of ${slideDeck.length}`;
+    }
+
+    function renderSinglePhoto() {
+      const photo = photoSlideDeck[singlePhotoIndex % photoSlideDeck.length];
+      photoStage.innerHTML = `
+        <article class="photo-screen" aria-label="${escapeHtml(photo.caption)}">
+          <div class="photo-backdrop" aria-hidden="true">
+            ${photoFrameMarkup(photo, 8000 + singlePhotoIndex)}
+          </div>
+          <div class="photo-primary">
+            ${photoFrameMarkup(photo, 5000 + singlePhotoIndex)}
+          </div>
+          <div class="slide-countdown"></div>
+        </article>
+      `;
+      status.textContent = `Photo ${singlePhotoIndex + 1} of ${photoSlideDeck.length}`;
+    }
+
+    function sendPlayerCommand(frame, func, args = []) {
+      frame?.contentWindow?.postMessage(JSON.stringify({
+        event: "command",
+        func,
+        args
+      }), "*");
+    }
+
+    function youtubeEmbedUrl(value, options = {}) {
+      if (!value) return "";
+      try {
+        const url = new URL(value);
+        const autoSound = options.autoSound ?? new URLSearchParams(window.location.search).get("sound") === "auto";
+        const params = new URLSearchParams({
+          autoplay: "1",
+          mute: autoSound ? "0" : "1",
+          playsinline: "1",
+          enablejsapi: "1",
+          loop: options.loop ? "1" : "0",
+          rel: "0",
+          modestbranding: "1",
+          origin: window.location.origin
+        });
+        if (url.hostname.includes("youtu.be")) {
+          const id = url.pathname.slice(1);
+          if (options.loop) params.set("playlist", id);
+          return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+        }
+        if (url.hostname.includes("youtube.com")) {
+          const videoId = url.searchParams.get("v");
+          if (videoId) {
+            if (options.loop) params.set("playlist", videoId);
+            return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+          }
+        }
+      } catch (error) {
+        return value;
+      }
+      return value;
+    }
+
+    function sendMusicCommand(func, args = []) {
+      const musicFrame = musicStage.querySelector(".music-frame");
+      sendPlayerCommand(musicFrame, func, args);
+    }
+
+    function startMusicMuted() {
+      if (!musicContent.enabled || activeMode === "live") return;
+      musicMuted = true;
+      sendMusicCommand("mute");
+      sendMusicCommand("playVideo");
+    }
+
+    function startMusicWithSound() {
+      if (!musicContent.enabled || activeMode === "live") return;
+      musicMuted = false;
+      sendMusicCommand("playVideo");
+      sendMusicCommand("unMute");
+      sendMusicCommand("setVolume", [clamp(musicContent.volume, 0, 100)]);
+    }
+
+    function toggleBackgroundMusicMute() {
+      if (musicMuted) {
+        startMusicWithSound();
+      } else {
+        startMusicMuted();
+      }
+    }
+
+    function pauseBackgroundMusic() {
+      sendMusicCommand("pauseVideo");
+      setTimeout(() => sendMusicCommand("pauseVideo"), 250);
+    }
+
+    function resumeBackgroundMusic() {
+      if (!musicContent.enabled || activeMode === "live") return;
+      const resume = () => musicMuted ? startMusicMuted() : startMusicWithSound();
+      [100, 650, 1600].forEach(delay => setTimeout(resume, delay));
+    }
+
+    function renderBackgroundMusic() {
+      if (!musicContent.enabled || !musicContent.url) {
+        musicStage.innerHTML = "";
+        return;
+      }
+
+      const embedUrl = youtubeEmbedUrl(musicContent.url, { autoSound: false, loop: true });
+      musicStage.innerHTML = `
+        <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      `;
+
+      const musicFrame = musicStage.querySelector(".music-frame");
+      musicFrame?.addEventListener("load", () => {
+        [250, 900, 1800].forEach(delay => setTimeout(startMusicMuted, delay));
+      }, { once: true });
+    }
+
+    function renderLive() {
+      const autoSound = new URLSearchParams(window.location.search).get("sound") === "auto";
+      const embedUrl = youtubeEmbedUrl(liveContent.embedUrl);
+      const media = embedUrl
+        ? `
+          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+          <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
+            <span class="sound-icon" aria-hidden="true">&#9658;</span>
+            <span class="sound-text">
+              <span class="sound-title">Enable sound</span>
+              <span class="sound-body">${autoSound ? "Chrome is trying sound automatically." : "Tap once if the display starts muted."}</span>
+            </span>
+          </button>
+        `
+        : `<div class="live-media-placeholder">Stream preview appears here</div>`;
+
+      liveStage.innerHTML = `
+        <article class="live-lobby">
+          <div class="live-media">${media}</div>
+          <div class="live-copy">
+            <p class="live-label"><span class="live-dot"></span>${escapeHtml(liveContent.label)}</p>
+            <h2 class="live-title">${escapeHtml(liveContent.title)}</h2>
+            ${liveContent.body ? `<p class="live-body">${escapeHtml(liveContent.body)}</p>` : ""}
+            ${liveContent.meta ? `<p class="live-meta">${escapeHtml(liveContent.meta)}</p>` : ""}
+          </div>
+        </article>
+      `;
+
+      const liveFrame = liveStage.querySelector(".live-frame");
+      const soundPrompt = liveStage.querySelector("#soundPrompt");
+      if (liveFrame) {
+        const sendLivePlayerCommand = (func, args = []) => sendPlayerCommand(liveFrame, func, args);
+        const startMuted = () => {
+          sendLivePlayerCommand("mute");
+          sendLivePlayerCommand("playVideo");
+        };
+        const startWithSound = () => {
+          sendLivePlayerCommand("playVideo");
+          sendLivePlayerCommand("unMute");
+          sendLivePlayerCommand("setVolume", [100]);
+        };
+        const hideSoundPrompt = () => soundPrompt?.classList.remove("visible");
+
+        liveFrame.addEventListener("load", () => {
+          if (autoSound) {
+            [200, 650, 1200, 2200].forEach(delay => setTimeout(startWithSound, delay));
+            [3600, 5600, 7800].forEach(delay => setTimeout(startMuted, delay));
+            setTimeout(() => soundPrompt?.classList.add("visible"), 2800);
+          } else {
+            [200, 650, 1200, 2200, 3600, 5600].forEach(delay => setTimeout(startMuted, delay));
+            setTimeout(() => soundPrompt?.classList.add("visible"), 3600);
+          }
+        }, { once: true });
+
+        soundPrompt?.addEventListener("click", () => {
+          startWithSound();
+          hideSoundPrompt();
+        });
+      }
+      status.textContent = "Live view";
+    }
+
+    function sendLiveCommand(func, args = []) {
+      const liveFrame = liveStage.querySelector(".live-frame");
+      sendPlayerCommand(liveFrame, func, args);
+    }
+
+    function pauseLiveStream() {
+      sendLiveCommand("pauseVideo");
+      setTimeout(() => sendLiveCommand("pauseVideo"), 250);
+      setTimeout(() => sendLiveCommand("pauseVideo"), 900);
+    }
+
+    function clearModeTimer() {
+      clearInterval(modeTimer);
+      modeTimer = null;
+    }
+
+    function restartModeTimer() {
+      clearModeTimer();
+      if (activeMode === "slides") {
+        modeTimer = setInterval(() => advanceSlide(1), 9000);
+      } else if (activeMode === "photo") {
+        modeTimer = setInterval(() => advancePhoto(1), 7000);
+      }
+    }
+
+    function advanceSlide(direction) {
+      slideIndex = (slideIndex + direction + slideDeck.length) % slideDeck.length;
+      renderSlide();
+    }
+
+    function advancePhoto(direction) {
+      singlePhotoIndex = (singlePhotoIndex + direction + photoSlideDeck.length) % photoSlideDeck.length;
+      renderSinglePhoto();
+    }
+
+    function setMode(mode) {
+      if (!views[mode]) return;
+      const previousMode = activeMode;
+      if (previousMode === "live" && mode !== "live") {
+        pauseLiveStream();
+        setTimeout(() => {
+          if (activeMode !== "live") liveStage.innerHTML = "";
+        }, 950);
+      }
+      if (mode === "live") {
+        pauseBackgroundMusic();
+      }
+      activeMode = mode;
+      document.body.dataset.mode = mode;
+
+      Object.entries(views).forEach(([key, view]) => {
+        view.classList.toggle("active", key === mode);
+      });
+
+      modeButtons.forEach(button => {
+        const selected = button.dataset.mode === mode;
+        button.classList.toggle("active", selected);
+        button.setAttribute("aria-pressed", selected ? "true" : "false");
+      });
+
+      if (mode === "wall") {
+        status.textContent = `${elements.length} on wall \u00b7 ${photoLibrary.length} cycling`;
+      } else if (mode === "slides") {
+        renderSlide();
+      } else if (mode === "photo") {
+        renderSinglePhoto();
+      } else if (mode === "live") {
+        renderLive();
+      }
+
+      if (previousMode === "live" && mode !== "live") {
+        resumeBackgroundMusic();
+      }
+      restartModeTimer();
+    }
+
+    function modeFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const queryMode = params.get("mode");
+      const hashMode = window.location.hash.replace("#", "");
+      return views[queryMode] ? queryMode : views[hashMode] ? hashMode : "wall";
+    }
+
+    function rebuildWall() {
+      const layout = solveLayout();
+      const slots = buildSlots(layout);
+
+      wall.querySelectorAll(".polaroid").forEach(card => card.remove());
+      wallSlots = slots;
+      wallCardWidth = layout.width;
+      const assignments = initialWallPhotos(slots.length);
+      elements = slots.map((slot, index) => makeCard(slot, index, layout.width, assignments[index]));
+      if (activeMode === "wall") {
+        status.textContent = `${elements.length} on wall \u00b7 ${photoLibrary.length} cycling`;
+      }
+      revealCards();
+      startTimers();
+    }
+
+    async function enterFullscreen() {
+      const target = document.documentElement;
+      try {
+        if (target.requestFullscreen) {
+          await target.requestFullscreen();
+        } else if (target.webkitRequestFullscreen) {
+          target.webkitRequestFullscreen();
+        }
+      } catch (error) {
+        // Fullscreen can only be changed from a browser-accepted user gesture.
+      }
+    }
+
+    async function exitFullscreen() {
+      try {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      } catch (error) {
+        // Browser fullscreen exit can fail if the platform owns the mode.
+      }
+    }
+
+    function toggleFullscreen() {
+      const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+      if (isFullscreen) {
+        exitFullscreen();
+      } else {
+        enterFullscreen();
+      }
+    }
+
+    function updateFullscreenPrompt() {
+      const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+      fullscreenPrompt.textContent = "";
+      fullscreenPrompt?.setAttribute(
+        "aria-label",
+        isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+      );
+    }
+
+    modeButtons.forEach(button => {
+      button.addEventListener("click", () => setMode(button.dataset.mode));
+    });
+
+    fullscreenPrompt?.addEventListener("click", toggleFullscreen);
+    musicPrompt?.addEventListener("click", toggleBackgroundMusicMute);
+    document.addEventListener("fullscreenchange", updateFullscreenPrompt);
+    document.addEventListener("webkitfullscreenchange", updateFullscreenPrompt);
+
+    prevButton.addEventListener("click", () => {
+      if (activeMode === "slides") advanceSlide(-1);
+      if (activeMode === "photo") advancePhoto(-1);
+      restartModeTimer();
+    });
+
+    nextButton.addEventListener("click", () => {
+      if (activeMode === "slides") advanceSlide(1);
+      if (activeMode === "photo") advancePhoto(1);
+      restartModeTimer();
+    });
+
+    document.addEventListener("keydown", event => {
+      const modeKeys = { "1": "wall", "2": "slides", "3": "photo", "4": "live" };
+      if (event.key === "f" || event.key === "F" || event.key === "F11") {
+        event.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+
+      if (modeKeys[event.key]) {
+        setMode(modeKeys[event.key]);
+        window.history.replaceState(null, "", `#${modeKeys[event.key]}`);
+        return;
+      }
+
+      if (event.key === "ArrowLeft" && activeMode === "slides") advanceSlide(-1);
+      if (event.key === "ArrowRight" && activeMode === "slides") advanceSlide(1);
+      if (event.key === "ArrowLeft" && activeMode === "photo") advancePhoto(-1);
+      if (event.key === "ArrowRight" && activeMode === "photo") advancePhoto(1);
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && (activeMode === "slides" || activeMode === "photo")) {
+        restartModeTimer();
+      }
+    });
+
+    [slideStage, photoStage].forEach(stage => {
+      stage.addEventListener("touchstart", event => {
+        touchStartX = event.changedTouches[0].clientX;
+      }, { passive: true });
+
+      stage.addEventListener("touchend", event => {
+        const delta = event.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(delta) < 45) return;
+        if (activeMode === "slides") advanceSlide(delta > 0 ? -1 : 1);
+        if (activeMode === "photo") advancePhoto(delta > 0 ? -1 : 1);
+        restartModeTimer();
+      }, { passive: true });
+    });
+
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(rebuildWall, 180);
+    });
+
+    window.addEventListener("hashchange", () => setMode(modeFromLocation()));
+
+    resetPhotoDrawBag();
+    rebuildWall();
+    renderSlide();
+    renderSinglePhoto();
+    renderBackgroundMusic();
+    renderLive();
+    loadContentManifest();
+    loadDisplayControl();
+    watchForRemoteUpdates();
+    setInterval(loadDisplayControl, 3000);
+    setInterval(watchForRemoteUpdates, 5000);
+    setMode(modeFromLocation());
+    updateFullscreenPrompt();
+  </script>
+</body>
+</html>

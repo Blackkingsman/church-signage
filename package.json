@@ -1,0 +1,16 @@
+{
+  "name": "church-signage-spa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local church signage display with Google Drive media and Firestore control.",
+  "scripts": {
+    "start": "node server.js",
+    "bridge": "node signage_bridge.js",
+    "seed": "node seed_signage.js",
+    "check": "node --check server.js && node --check signage_bridge.js && node --check seed_signage.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.4.0",
+    "googleapis": "^156.0.0"
+  }
+}

@@ -1,0 +1,25 @@
+# Credentials and machine-specific configuration
+serviceAccountKey.json
+signage.config.json
+.env
+.env.*
+
+# Generated signage data and downloaded Drive media
+content.json
+control.json
+.signage-sync-state.json
+.deploy-progress.json
+media/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Node
+node_modules/
+
+# Logs
+*.log
+logs/
+run/
