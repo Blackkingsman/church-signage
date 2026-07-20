@@ -126,14 +126,13 @@
       transform:
         translate(var(--float-x), var(--float-y))
         rotate(var(--rotate))
-        scale(calc(var(--scale) * .92));
+        scale(var(--scale));
       transform-origin: center;
       opacity: 0;
       transition:
-        opacity .5s ease,
-        transform .5s cubic-bezier(.22,.75,.25,1),
+        opacity .4s ease,
         box-shadow .6s ease;
-      will-change: transform, opacity;
+      will-change: opacity;
       border-radius: 2px;
     }
 
@@ -147,10 +146,6 @@
 
     .polaroid.leaving {
       opacity: 0;
-      transform:
-        translate(calc(var(--float-x) + 8px), calc(var(--float-y) - 12px))
-        rotate(calc(var(--rotate) + 1.8deg))
-        scale(calc(var(--scale) * .94));
     }
 
     .polaroid:hover {
@@ -1597,15 +1592,6 @@
           : ROTATION_MS;
 
       rotationTimer = setInterval(rotateWallBatch, rotationDelay);
-      driftTimer = setInterval(() => {
-        elements.forEach((el, index) => {
-          if (!el.classList.contains("visible")) return;
-          const driftX = (Math.sin(Date.now() / 7000 + index) * DRIFT_X).toFixed(2);
-          const driftY = (Math.cos(Date.now() / 8500 + index) * DRIFT_Y).toFixed(2);
-          el.style.setProperty("--float-x", `calc(-50% + ${driftX}px)`);
-          el.style.setProperty("--float-y", `calc(-50% + ${driftY}px)`);
-        });
-      }, 1000);
     }
 
     function renderSlide() {

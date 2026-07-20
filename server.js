@@ -84,9 +84,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    const normalizedPath = localPath.replaceAll("\\", "/");
+    const cacheControl = normalizedPath.startsWith("media/")
+      ? "public, max-age=31536000, immutable"
+      : "no-store";
+
     res.writeHead(200, {
       "Content-Type": types[path.extname(filePath).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": "no-store"
+      "Cache-Control": cacheControl
     });
     res.end(data);
   });

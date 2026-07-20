@@ -133,7 +133,11 @@ async function syncFolder(drive, folderId, category, previousState) {
 
   for (const [position, file] of files.entries()) {
     const extension = imageTypes.get(file.mimeType);
-    const fileName = `${safeName(file.name, file.id)}-${file.id.slice(0, 10)}${extension}`;
+    const contentVersion = (
+      file.md5Checksum
+      || String(Date.parse(file.modifiedTime || "") || 0)
+    ).slice(0, 10);
+    const fileName = `${safeName(file.name, file.id)}-${file.id.slice(0, 10)}-${contentVersion}${extension}`;
     const destination = path.join(destinationDirectory, fileName);
     const signature = `${file.modifiedTime || ""}:${file.md5Checksum || ""}:${fileName}`;
     const prior = previousState[file.id] || {};
