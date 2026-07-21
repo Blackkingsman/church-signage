@@ -148,7 +148,17 @@ async function syncFolder(drive, folderId, category, previousState) {
   const destinationDirectory = path.join(mediaRoot, category);
   await fsp.mkdir(destinationDirectory, { recursive: true });
 
-  const files = await listDriveFiles(drive, folderId);
+  const driveFiles = await listDriveFiles(drive, folderId);
+  const seenContent = new Set();
+  const files = driveFiles.filter(file => {
+    const contentKey = file.md5Checksum ? `md5:${file.md5Checksum}` : `id:${file.id}`;
+    if (seenContent.has(contentKey)) {
+      console.log(`Skipping duplicate ${category} image: ${file.name}`);
+      return false;
+    }
+    seenContent.add(contentKey);
+    return true;
+  });
   const currentState = {};
   const manifestItems = [];
   const keepFiles = new Set();

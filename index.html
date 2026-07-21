@@ -276,6 +276,59 @@
       align-items: center;
     }
 
+    .slide-stage,
+    .photo-stage {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .slide-stage > .slide-screen,
+    .photo-stage > .photo-screen {
+      grid-area: 1 / 1;
+      opacity: 1;
+    }
+
+    .slide-stage > .screen-buffer,
+    .photo-stage > .screen-buffer {
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .slide-stage > .transition-slide-right {
+      opacity: 1;
+      transform: translateX(-100%);
+      transition: transform .7s cubic-bezier(.22, .8, .25, 1);
+    }
+
+    .photo-stage > .transition-slide-left {
+      opacity: 1;
+      transform: translateX(100%);
+      transition: transform .65s cubic-bezier(.22, .8, .25, 1);
+    }
+
+    .photo-stage > .transition-wipe-up {
+      opacity: 1;
+      clip-path: inset(100% 0 0 0);
+      transition: clip-path .7s cubic-bezier(.22, .8, .25, 1);
+    }
+
+    .slide-stage > .transition-slide-right.screen-ready,
+    .photo-stage > .transition-slide-left.screen-ready {
+      transform: translateX(0);
+    }
+
+    .photo-stage > .transition-wipe-up.screen-ready {
+      clip-path: inset(0);
+    }
+
+    .screen-buffer .slide-countdown {
+      animation-play-state: paused;
+    }
+
+    .screen-buffer.screen-ready .slide-countdown {
+      animation-play-state: running;
+    }
+
     .announcement-slide {
       display: grid;
       grid-template-columns: minmax(0, 1.05fr) minmax(340px, .95fr);
@@ -1132,6 +1185,8 @@
     let lastAppliedControl = "";
     let renderedMusicKey = "";
     let renderedLiveKey = "";
+    let slideRenderToken = 0;
+    let photoRenderToken = 0;
     function artwork([sky, warm, dark, type], id) {
       const gradId = `g-${id}`;
       const grainId = `grain-${id}`;
@@ -1502,20 +1557,24 @@
       return el;
     }
 
+    async function waitForImages(el) {
+      const images = [...el.querySelectorAll("img")];
+      await Promise.all(images.map(async image => {
+        if (!image.complete) {
+          await new Promise(resolve => {
+            image.addEventListener("load", resolve, { once: true });
+            image.addEventListener("error", resolve, { once: true });
+          });
+        }
+
+        if (image.naturalWidth && typeof image.decode === "function") {
+          await image.decode().catch(() => {});
+        }
+      }));
+    }
+
     async function waitForCardImage(el) {
-      const image = el.querySelector("img");
-      if (!image) return;
-
-      if (!image.complete) {
-        await new Promise(resolve => {
-          image.addEventListener("load", resolve, { once: true });
-          image.addEventListener("error", resolve, { once: true });
-        });
-      }
-
-      if (image.naturalWidth && typeof image.decode === "function") {
-        await image.decode().catch(() => {});
-      }
+      await waitForImages(el);
     }
 
     function revealCardWhenReady(el, delay = 0) {
@@ -1597,23 +1656,50 @@
       rotationTimer = setInterval(rotateWallBatch, rotationDelay);
     }
 
+    async function replaceSlideshowScreen(stage, markup, token, currentToken, transitionName) {
+      const template = document.createElement("template");
+      template.innerHTML = markup.trim();
+      const nextScreen = template.content.firstElementChild;
+      const previousScreens = [...stage.children];
+      nextScreen.classList.add("screen-buffer", transitionName);
+      stage.appendChild(nextScreen);
+
+      await waitForImages(nextScreen);
+      if (token !== currentToken()) {
+        nextScreen.remove();
+        return;
+      }
+
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      nextScreen.classList.add("screen-ready");
+      previousScreens.forEach(screen => screen.classList.add("screen-leaving"));
+
+      setTimeout(() => {
+        if (token !== currentToken()) return;
+        previousScreens.forEach(screen => screen.remove());
+        nextScreen.classList.remove("screen-buffer", "screen-ready", transitionName);
+      }, 740);
+    }
+
     function renderSlide() {
+      const token = ++slideRenderToken;
       const slide = slideDeck[slideIndex % slideDeck.length];
       const fallbackPhoto = photoLibrary[(slide.artIndex ?? slideIndex) % photoLibrary.length];
       const photo = photoSource(slide) ? slide : fallbackPhoto;
 
-      slideStage.innerHTML = `
+      replaceSlideshowScreen(slideStage, `
         <article class="slide-screen" aria-label="${escapeHtml(slide.caption || `Slide ${slideIndex + 1}`)}">
           ${photoFrameMarkup(photo, 3000 + slideIndex)}
           <div class="slide-countdown"></div>
         </article>
-      `;
+      `, token, () => slideRenderToken, "transition-slide-right");
       status.textContent = `Slide ${slideIndex + 1} of ${slideDeck.length}`;
     }
 
     function renderSinglePhoto() {
+      const token = ++photoRenderToken;
       const photo = photoSlideDeck[singlePhotoIndex % photoSlideDeck.length];
-      photoStage.innerHTML = `
+      replaceSlideshowScreen(photoStage, `
         <article class="photo-screen" aria-label="${escapeHtml(photo.caption)}">
           <div class="photo-backdrop" aria-hidden="true">
             ${photoFrameMarkup(photo, 8000 + singlePhotoIndex)}
@@ -1623,7 +1709,9 @@
           </div>
           <div class="slide-countdown"></div>
         </article>
-      `;
+      `, token, () => photoRenderToken, singlePhotoIndex % 2 === 0
+        ? "transition-slide-left"
+        : "transition-wipe-up");
       status.textContent = `Photo ${singlePhotoIndex + 1} of ${photoSlideDeck.length}`;
     }
 
