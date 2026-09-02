@@ -219,32 +219,6 @@ function normalizeRemoteState(config, data = {}) {
   };
 }
 
-function normalizeSermon(snapshot) {
-  if (!snapshot || snapshot.empty) return {};
-
-  const docs = snapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() }))
-    .filter(sermon => sermon.isPublished !== false && sermon.isSermon !== false);
-  const sermon = docs[0];
-  if (!sermon) return {};
-
-  const videoId = sermon.youtubeVideoId || sermon.videoId || "";
-  const videoUrl = canonicalYouTubeUrl(
-    sermon.videoUrl || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : "")
-  );
-  const title = sermon.title || sermon.fullTitle || "Sunday Worship";
-  const metaParts = [sermon.speaker, sermon.displayDate].filter(Boolean);
-
-  return {
-    sourceSermonId: sermon.id,
-    liveUrl: videoUrl,
-    liveTitle: title,
-    liveBody: sermon.description || "",
-    liveMeta: metaParts.join(" | "),
-    thumbnailUrl: sermon.thumbnailUrl || ""
-  };
-}
-
 function buildManifest(config, photos, photoSlides, slides, remote) {
   const live = config.live || {};
   return {
@@ -289,19 +263,12 @@ async function main() {
   const signageDocument = firestore
     .collection(firestoreConfig.signageCollection || firestoreConfig.collection || "appContent")
     .doc(firestoreConfig.signageDocument || firestoreConfig.document || "signage");
-  const sermonsCollection = firestoreConfig.sermonsCollection || "sermons";
-  const useLatestSermon = firestoreConfig.useLatestSermon !== false;
-  const latestSermonQuery = firestore
-    .collection(sermonsCollection)
-    .orderBy(firestoreConfig.sermonOrderBy || "scheduledStart", "desc")
-    .limit(Number(firestoreConfig.sermonQueryLimit) || 20);
 
   const existingContent = readJson(contentPath, {}) || {};
   let photos = Array.isArray(existingContent.photos) ? existingContent.photos : [];
   let photoSlides = Array.isArray(existingContent.photoSlides) ? existingContent.photoSlides : [];
   let slides = Array.isArray(existingContent.slides) ? existingContent.slides : [];
   let remote = normalizeRemoteState(config);
-  let syncedSermonSignature = "";
   let syncState = readJson(statePath, {}) || {};
   let manifestQueue = Promise.resolve();
   let driveSyncRunning = false;
@@ -326,37 +293,6 @@ async function main() {
       `Firestore snapshot applied: mode=${remote.mode}, `
       + `live=${remote.liveUrl ? "set" : "empty"}, `
       + `music=${remote.backgroundMusicUrl ? "set" : "empty"}`
-    );
-  }
-
-  async function applySermonSnapshot(snapshot) {
-    const sermon = normalizeSermon(snapshot);
-    if (!sermon.liveUrl) {
-      console.log("Latest sermon snapshot applied: no published sermon found");
-      return;
-    }
-
-    const signature = [
-      sermon.sourceSermonId,
-      sermon.liveUrl,
-      sermon.liveTitle,
-      sermon.liveBody,
-      sermon.liveMeta
-    ].join("|");
-    if (signature === syncedSermonSignature) return;
-
-    syncedSermonSignature = signature;
-    await signageDocument.set({
-      liveUrl: sermon.liveUrl,
-      liveTitle: sermon.liveTitle,
-      liveBody: sermon.liveBody,
-      liveMeta: sermon.liveMeta,
-      liveSource: "sermons",
-      liveSourceSermonId: sermon.sourceSermonId,
-      liveThumbnailUrl: sermon.thumbnailUrl
-    }, { merge: true });
-    console.log(
-      `Latest sermon synced to signage: ${sermon.liveTitle || sermon.liveUrl}`
     );
   }
 
@@ -430,20 +366,6 @@ async function syncDrive() {
       process.exitCode = 1;
     }
   );
-  const unsubscribeSermons = useLatestSermon
-    ? latestSermonQuery.onSnapshot(
-      snapshot => {
-        applySermonSnapshot(snapshot).catch(error => {
-          console.error("Could not apply latest sermon snapshot:", error);
-        });
-      },
-      error => {
-        console.error("Latest sermon snapshot listener stopped:", error);
-        process.exitCode = 1;
-      }
-    )
-    : () => {};
-
   await syncDrive();
   const syncSeconds = Math.max(30, Number((config.drive || {}).syncSeconds) || 300);
   const driveTimer = setInterval(() => {
@@ -453,15 +375,13 @@ async function syncDrive() {
   console.log(
     `Watching Firestore `
     + `${firestoreConfig.signageCollection || firestoreConfig.collection || "appContent"}`
-    + `/${firestoreConfig.signageDocument || firestoreConfig.document || "signage"}`
-    + `${useLatestSermon ? ` and ${sermonsCollection}` : ""}; `
+    + `/${firestoreConfig.signageDocument || firestoreConfig.document || "signage"}; `
     + `syncing Drive every ${syncSeconds} seconds.`
   );
 
   function shutdown() {
     clearInterval(driveTimer);
     unsubscribeSignage();
-    unsubscribeSermons();
     process.exit();
   }
 

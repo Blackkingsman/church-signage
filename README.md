@@ -14,7 +14,10 @@ After completing this setup:
 - Slides are ordered by filename.
 - The photo wall and photo slideshow use their own independent photo pools.
 - Firestore `appContent/signage` controls the active mode, live URL, and background music.
-- Firestore `sermons` updates `appContent/signage` when a newer sermon appears.
+- The backend (`awesome_church/backend`, not this project) watches `sermons` and updates
+  `appContent/signage`'s live title/body/meta/thumbnail whenever a newer sermon appears.
+  `liveUrl` is no longer auto-populated (the church runs local RTMP push, not YouTube) —
+  it's set by hand in Firebase console only, for a special event or test stream.
 - A real Firestore `onSnapshot` listener applies changes as soon as they arrive.
 - The TV changes modes and content without a page reload.
 - Drive images are cached on the church VM, so existing media survives an
@@ -27,9 +30,17 @@ Google Drive Living Wall Photos -----\
 Google Drive Photo Slideshow ---------> signage_bridge.js -> content.json -> SPA
 Google Drive Announcement Slides -----/
 
-Firestore sermons --------------> onSnapshot -> appContent/signage live fields
-Firestore appContent/signage ---> onSnapshot -> control.json + content.json
+Firestore appContent/signage ---> onSnapshot (read-only) -> control.json + content.json
+
+  (elsewhere, in the awesome_church backend, NOT this project:)
+  Firestore sermons -----> appContent/signage live fields (title/body/meta/thumbnail, no liveUrl)
 ```
+
+This project only ever *reads* Firestore — it never writes to it. Sermon data is
+mirrored into `appContent/signage` server-side by the main backend
+(`awesome_church/backend/run.py`), which already watches `sermons` for other
+purposes. Keeping that write logic in one place avoids two independent
+processes racing to update the same document.
 
 The browser never receives the service account key. The local server only
 exposes `index.html`, `control.json`, `content.json`, and downloaded media.
@@ -49,7 +60,8 @@ Use the same Google Cloud project as the existing Firebase project.
 
 1. Open **IAM & Admin > Service Accounts**.
 2. Create a dedicated signage service account.
-3. Grant it **Cloud Datastore User** so it can read Firestore.
+3. Grant it a **read-only Firestore role** (e.g. Cloud Datastore Viewer) —
+   this project only ever reads `appContent/signage`, it never writes.
 4. Open the service account, select **Keys**, and create a JSON key.
 5. Download the key.
 6. Rename it to `serviceAccountKey.json`.
@@ -109,11 +121,7 @@ Edit `signage.config.json`:
   "serviceAccountKey": "./serviceAccountKey.json",
   "firestore": {
     "signageCollection": "appContent",
-    "signageDocument": "signage",
-    "sermonsCollection": "sermons",
-    "useLatestSermon": true,
-    "sermonOrderBy": "scheduledStart",
-    "sermonQueryLimit": 20
+    "signageDocument": "signage"
   },
   "drive": {
     "photosFolderId": "YOUR_PHOTOS_FOLDER_ID",
@@ -163,10 +171,12 @@ Optional live-screen text fields:
 | `liveSourceSermonId` | string |
 | `liveThumbnailUrl` | string |
 
-The bridge writes `liveUrl`, `liveTitle`, `liveBody`, `liveMeta`, `liveSource`,
-`liveSourceSermonId`, and `liveThumbnailUrl` automatically when it detects a
-new latest sermon. The tech team can still manually edit these fields in
-Firebase for a special event or test stream.
+The awesome_church backend writes `liveTitle`, `liveBody`, `liveMeta`,
+`liveSource`, `liveSourceSermonId`, and `liveThumbnailUrl` automatically
+whenever it detects a new latest sermon — this bridge does not, it only
+reads this document. `liveUrl` is never auto-set (no YouTube link to derive
+it from anymore); the tech team can still manually edit any of these fields
+in Firebase for a special event or test stream.
 
 No index field is required. Slides and photos advance automatically.
 
@@ -180,34 +190,33 @@ immediately updates the local display state:
 
 The SPA notices those files and applies them without reloading.
 
-## 4. Sermon Live Feed
+## 4. Sermon Live Feed (owned by the backend, not this project)
 
-The bridge also listens to the `sermons` collection and reads the newest sermon
-by `scheduledStart`. It looks at the most recent 20 docs, skips docs where
-`isPublished` is `false` or `isSermon` is `false`, and uses the first valid one.
-When that newest sermon changes, the bridge updates the live fields on
-`appContent/signage`. The webpage only follows `appContent/signage`, so manual
-changes to `mode`, `backgroundMusicUrl`, or live fields apply through the same
-snapshot path.
+This bridge does **not** watch the `sermons` collection anymore. That job
+belongs to the main `awesome_church` backend (`backend/run.py`), which
+already watches `sermons` for push notifications and now also mirrors the
+newest sermon into `appContent/signage`. See `_sync_latest_sermon_to_signage`
+in that repo for the exact logic (most recent 20 docs by `scheduledStart`,
+skipping `isPublished === false` or `isSermon === false`, first match wins).
 
-Supported sermon fields:
+This bridge only ever reads whatever ends up on `appContent/signage` — so
+manual changes to `mode`, `backgroundMusicUrl`, or live fields in Firebase
+console still apply immediately through the same `onSnapshot` path, same as
+sermon-driven updates.
 
-| Field | Used For |
+Fields the backend keeps in sync from the latest sermon:
+
+| Field | Source |
 | --- | --- |
-| `videoUrl` | Preferred live URL |
-| `youtubeVideoId` or `videoId` | Builds a YouTube URL when `videoUrl` is missing |
-| `title` or `fullTitle` | Live-screen title |
-| `description` | Live-screen body |
-| `speaker` and `displayDate` | Live-screen meta line |
-| `scheduledStart` | Latest-sermon ordering |
-| `isPublished` | Must not be `false` |
-| `isSermon` | Must not be `false` |
+| `liveTitle` | `title` or `fullTitle` |
+| `liveBody` | `description` |
+| `liveMeta` | `speaker` + `displayDate` |
+| `liveThumbnailUrl` | `thumbnailUrl` |
+| `liveSourceSermonId` | the sermon doc's ID |
 
-Example sermon URL resolution:
-
-```text
-videoUrl -> https://www.youtube.com/watch?v=8WChqo2NYVw
-```
+`liveUrl` is never touched by this sync — the church now runs local RTMP
+push instead of YouTube, so there's no meaningful URL to derive. Set it by
+hand in Firebase console only if you need a link for a special event.
 
 ## 5. Install
 
@@ -222,18 +231,11 @@ repeated when `package.json` changes.
 
 ## 6. Test the Integration
 
-To initialize `appContent/signage` with the latest sermon and the default
-background music URL, run:
-
-```powershell
-npm run seed
-```
-
-You can optionally set the starting mode:
-
-```powershell
-npm run seed -- live
-```
+To initialize `appContent/signage` (mode, `backgroundMusicUrl`, or any live
+field), edit the document directly in the Firebase console — this project no
+longer writes to Firestore, so there's no local seed script anymore. The
+backend keeps the sermon-derived live fields in sync on its own once a
+published sermon exists.
 
 First, start the integration bridge:
 
@@ -246,8 +248,7 @@ A successful start reports:
 ```text
 Drive sync complete: 100 photos, 10 slides
 Firestore snapshot applied: mode=wall, live=set, music=set
-Latest sermon synced to signage: AWESOME CHURCH KOR LIVE | INT 11AM | THE GOD WHO MEETS MY NEEDS
-Watching Firestore appContent/signage and sermons
+Watching Firestore appContent/signage; syncing Drive every 300 seconds.
 ```
 
 It creates these local generated files:
@@ -277,8 +278,10 @@ http://10.50.0.3:8000/
 Test the complete flow:
 
 1. Change Firestore `mode` to `wall`, `slides`, `photo`, and `live`.
-2. Add or update a newer published sermon and confirm `appContent/signage.liveUrl`
-   updates.
+2. In the `awesome_church` backend repo, add or update a newer published
+   sermon and confirm `appContent/signage`'s `liveTitle`/`liveBody`/`liveMeta`/
+   `liveThumbnailUrl` update (this bridge just reflects whatever lands there —
+   it isn't the thing computing it).
 3. Change `backgroundMusicUrl` and confirm the background player changes.
 4. Add an image to each Drive folder.
 5. Restart `npm run bridge` or wait for the next Drive sync.
@@ -328,8 +331,9 @@ entered in `signage.config.json`.
 
 ### Firestore permission denied
 
-Confirm the key belongs to the Firebase project and the service account has the
-**Cloud Datastore User** role.
+Confirm the key belongs to the Firebase project and the service account has a
+Firestore **read** role (e.g. Cloud Datastore Viewer). It doesn't need write
+access — this project never writes to Firestore.
 
 ### Drive returns 404 or no images
 

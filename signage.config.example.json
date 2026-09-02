@@ -2,11 +2,7 @@
   "serviceAccountKey": "./serviceAccountKey.json",
   "firestore": {
     "signageCollection": "appContent",
-    "signageDocument": "signage",
-    "sermonsCollection": "sermons",
-    "useLatestSermon": true,
-    "sermonOrderBy": "scheduledStart",
-    "sermonQueryLimit": 20
+    "signageDocument": "signage"
   },
   "drive": {
     "photosFolderId": "PASTE_PHOTOS_FOLDER_ID_HERE",
