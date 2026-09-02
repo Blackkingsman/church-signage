@@ -606,6 +606,11 @@
       border: 0;
     }
 
+    .live-video {
+      object-fit: contain;
+      background: #000;
+    }
+
     .live-media-placeholder {
       display: grid;
       place-items: center;
@@ -858,6 +863,7 @@
     <div class="status" id="status">Photo wall &middot; live</div>
   </main>
 
+  <script src="hls.min.js"></script>
   <script>
     const basePhotoLibrary = [
       { caption: "Sunday worship", art: ["#7fa7c8", "#e8c486", "#4d6f55", "sunset"] },
@@ -1822,11 +1828,39 @@
       }, { once: true });
     }
 
+    function isHlsUrl(value) {
+      return typeof value === "string" && /\.m3u8(\?|$)/i.test(value);
+    }
+
+    function attachHlsSource(video, url) {
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Safari (and some smart-TV browsers) play HLS natively via <video src>.
+        video.src = url;
+        video.play().catch(() => {});
+        return;
+      }
+      if (window.Hls && window.Hls.isSupported()) {
+        const hls = new window.Hls({ liveSyncDurationCount: 3 });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        hls.on(window.Hls.Events.ERROR, (event, data) => {
+          if (data?.fatal) console.error("HLS playback error:", data);
+        });
+        video._hls = hls;
+      } else {
+        console.error("This browser can't play HLS and Hls.js isn't available.");
+      }
+    }
+
     function renderLive() {
       const autoSound = new URLSearchParams(window.location.search).get("sound") === "auto";
-      const embedUrl = youtubeEmbedUrl(liveContent.embedUrl);
+      const rawUrl = liveContent.embedUrl || "";
+      const hls = isHlsUrl(rawUrl);
+      const embedUrl = hls ? rawUrl : youtubeEmbedUrl(rawUrl);
       const renderKey = JSON.stringify([
         embedUrl,
+        hls,
         autoSound,
         liveContent.label,
         liveContent.title,
@@ -1839,18 +1873,24 @@
       }
       renderedLiveKey = renderKey;
 
-      const media = embedUrl
-        ? `
-          <iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
-          <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
-            <span class="sound-icon" aria-hidden="true">&#9658;</span>
-            <span class="sound-text">
-              <span class="sound-title">Enable sound</span>
-              <span class="sound-body">${autoSound ? "Chrome is trying sound automatically." : "Tap once if the display starts muted."}</span>
-            </span>
-          </button>
-        `
-        : `<div class="live-media-placeholder">Stream preview appears here</div>`;
+      const soundPromptMarkup = `
+        <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
+          <span class="sound-icon" aria-hidden="true">&#9658;</span>
+          <span class="sound-text">
+            <span class="sound-title">Enable sound</span>
+            <span class="sound-body">${autoSound ? "Chrome is trying sound automatically." : "Tap once if the display starts muted."}</span>
+          </span>
+        </button>
+      `;
+
+      let media;
+      if (hls) {
+        media = `<video class="live-frame live-video" autoplay muted playsinline></video>${soundPromptMarkup}`;
+      } else if (embedUrl) {
+        media = `<iframe class="live-frame" src="${escapeHtml(embedUrl)}" title="Live service stream" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>${soundPromptMarkup}`;
+      } else {
+        media = `<div class="live-media-placeholder">Stream preview appears here</div>`;
+      }
 
       liveStage.innerHTML = `
         <article class="live-lobby">
@@ -1864,36 +1904,56 @@
         </article>
       `;
 
-      const liveFrame = liveStage.querySelector(".live-frame");
       const soundPrompt = liveStage.querySelector("#soundPrompt");
-      if (liveFrame) {
-        const sendLivePlayerCommand = (func, args = []) => sendPlayerCommand(liveFrame, func, args);
-        const startMuted = () => {
-          sendLivePlayerCommand("mute");
-          sendLivePlayerCommand("playVideo");
-        };
+
+      if (hls) {
+        const video = liveStage.querySelector(".live-video");
+        attachHlsSource(video, embedUrl);
         const startWithSound = () => {
-          sendLivePlayerCommand("playVideo");
-          sendLivePlayerCommand("unMute");
-          sendLivePlayerCommand("setVolume", [100]);
+          video.muted = false;
+          video.volume = 1;
+          video.play().catch(() => {});
         };
         const hideSoundPrompt = () => soundPrompt?.classList.remove("visible");
-
-        liveFrame.addEventListener("load", () => {
-          if (autoSound) {
-            [200, 650, 1200, 2200].forEach(delay => setTimeout(startWithSound, delay));
-            [3600, 5600, 7800].forEach(delay => setTimeout(startMuted, delay));
-            setTimeout(() => soundPrompt?.classList.add("visible"), 2800);
-          } else {
-            [200, 650, 1200, 2200, 3600, 5600].forEach(delay => setTimeout(startMuted, delay));
-            setTimeout(() => soundPrompt?.classList.add("visible"), 3600);
-          }
-        }, { once: true });
-
+        setTimeout(() => soundPrompt?.classList.add("visible"), 1500);
+        if (autoSound) {
+          setTimeout(startWithSound, 300);
+        }
         soundPrompt?.addEventListener("click", () => {
           startWithSound();
           hideSoundPrompt();
         });
+      } else {
+        const liveFrame = liveStage.querySelector(".live-frame");
+        if (liveFrame) {
+          const sendLivePlayerCommand = (func, args = []) => sendPlayerCommand(liveFrame, func, args);
+          const startMuted = () => {
+            sendLivePlayerCommand("mute");
+            sendLivePlayerCommand("playVideo");
+          };
+          const startWithSound = () => {
+            sendLivePlayerCommand("playVideo");
+            sendLivePlayerCommand("unMute");
+            sendLivePlayerCommand("setVolume", [100]);
+          };
+          const hideSoundPrompt = () => soundPrompt?.classList.remove("visible");
+
+          liveFrame.addEventListener("load", () => {
+            if (autoSound) {
+              [200, 650, 1200, 2200].forEach(delay => setTimeout(startWithSound, delay));
+              [3600, 5600, 7800].forEach(delay => setTimeout(startMuted, delay));
+              setTimeout(() => soundPrompt?.classList.add("visible"), 2800);
+            } else {
+              [200, 650, 1200, 2200, 3600, 5600].forEach(delay => setTimeout(startMuted, delay));
+              setTimeout(() => soundPrompt?.classList.add("visible"), 3600);
+            }
+          }, { once: true });
+
+          soundPrompt?.addEventListener("click", () => {
+            startWithSound();
+            hideSoundPrompt();
+          });
+        }
       }
       status.textContent = "Live view";
     }
@@ -1904,6 +1964,15 @@
     }
 
     function pauseLiveStream() {
+      const video = liveStage.querySelector(".live-video");
+      if (video) {
+        video.pause();
+        if (video._hls) {
+          video._hls.destroy();
+          video._hls = null;
+        }
+        return;
+      }
       sendLiveCommand("pauseVideo");
       setTimeout(() => sendLiveCommand("pauseVideo"), 250);
       setTimeout(() => sendLiveCommand("pauseVideo"), 900);

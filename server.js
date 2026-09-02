@@ -21,7 +21,7 @@ const types = {
 };
 
 function isPublicFile(relativePath) {
-  if (["index.html", "content.json", "control.json"].includes(relativePath)) {
+  if (["index.html", "content.json", "control.json", "hls.min.js"].includes(relativePath)) {
     return true;
   }
 
