@@ -1,0 +1,1432 @@
+#!/usr/bin/env bash
+# Awesome Church media controller — installed to /usr/local/bin/media by vm/install.sh.
+# Settings come from /etc/awesomechurch-media.env (see vm/README.md).
+set -uo pipefail
+
+CONFIG_FILE="/etc/awesomechurch-media.env"
+
+if [[ ! -r "$CONFIG_FILE" ]]; then
+    echo "ERROR: Cannot read $CONFIG_FILE" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+# Safe defaults. Any of these can be overridden in /etc/awesomechurch-media.env.
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
+SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-90}"
+WINDOWS_SCRIPT_TIMEOUT="${WINDOWS_SCRIPT_TIMEOUT:-120}"
+POE_REQUEST_TIMEOUT="${POE_REQUEST_TIMEOUT:-90}"
+
+CAMERA_ON_ATTEMPTS="${CAMERA_ON_ATTEMPTS:-36}"
+CAMERA_OFF_ATTEMPTS="${CAMERA_OFF_ATTEMPTS:-24}"
+PC_ONLINE_ATTEMPTS="${PC_ONLINE_ATTEMPTS:-48}"
+PC_OFFLINE_ATTEMPTS="${PC_OFFLINE_ATTEMPTS:-24}"
+
+WAIT_INTERVAL_SECONDS="${WAIT_INTERVAL_SECONDS:-5}"
+WAKE_PACKET_COUNT="${WAKE_PACKET_COUNT:-5}"
+WAKE_PACKET_INTERVAL="${WAKE_PACKET_INTERVAL:-2}"
+
+# Mac Mini (OBS host), OBS WebSocket, camera presets, stream helpers.
+TOOLS_DIR="${TOOLS_DIR:-/opt/awesomechurch-media}"
+PY="${PY:-$TOOLS_DIR/venv/bin/python3}"
+[[ -x "$PY" ]] || PY="python3"
+
+MAC_MINI_IP="${MAC_MINI_IP:-}"
+MAC_SSH_HOST="${MAC_SSH_HOST:-}"
+MAC_SSH_PORT="${MAC_SSH_PORT:-22}"
+MAC_MINI_MAC="${MAC_MINI_MAC:-}"
+MAC_ONLINE_ATTEMPTS="${MAC_ONLINE_ATTEMPTS:-24}"
+
+OBS_WS_HOST="${OBS_WS_HOST:-$MAC_MINI_IP}"
+OBS_WS_PORT="${OBS_WS_PORT:-4455}"
+OBS_WS_PASSWORD="${OBS_WS_PASSWORD:-}"
+OBS_REQUIRED_INPUTS="${OBS_REQUIRED_INPUTS:-}"
+OBS_APP_NAME="${OBS_APP_NAME:-OBS}"
+OBS_OPEN_ATTEMPTS="${OBS_OPEN_ATTEMPTS:-18}"
+
+CAMERA_PRESET_PREP="${CAMERA_PRESET_PREP:-}"
+CAMERA_VISCA_PORT="${CAMERA_VISCA_PORT:-52381}"
+
+log() {
+    printf '[%s] %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" \
+        "$*"
+}
+
+json_escape() {
+    local value="${1-}"
+
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+
+    printf '%s' "$value"
+}
+
+result() {
+    local success="$1"
+    local action="$2"
+    local message="$3"
+
+    printf '{"success":%s,"partial_success":false,"action":"%s","message":"%s"}\n' \
+        "$success" \
+        "$(json_escape "$action")" \
+        "$(json_escape "$message")"
+}
+
+partial_result() {
+    local action="$1"
+    local message="$2"
+
+    printf '{"success":false,"partial_success":true,"action":"%s","message":"%s"}\n' \
+        "$(json_escape "$action")" \
+        "$(json_escape "$message")"
+}
+
+ping_ok() {
+    ping -c 1 -W 1 "$1" >/dev/null 2>&1
+}
+
+tcp_ok() {
+    [[ -n "${1:-}" ]] || return 1
+    nc -z -w 3 "$1" "$2" >/dev/null 2>&1
+}
+
+poe_request() {
+    local action="$1"
+
+    timeout \
+        --signal=TERM \
+        --kill-after=5s \
+        "$POE_REQUEST_TIMEOUT" \
+        curl \
+            --fail \
+            --silent \
+            --show-error \
+            --connect-timeout 5 \
+            --max-time "$POE_REQUEST_TIMEOUT" \
+            -X POST \
+            -H "X-API-Token: ${POE_API_TOKEN}" \
+            "${POE_API_URL}/poe/${CAMERA_POE_PORT}/${action}"
+}
+
+windows_ssh() {
+    timeout \
+        --signal=TERM \
+        --kill-after=10s \
+        "$SSH_COMMAND_TIMEOUT" \
+        ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+            -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 \
+            -o StrictHostKeyChecking=accept-new \
+            -p "$WINDOWS_SSH_PORT" \
+            "${WINDOWS_SSH_HOST}" \
+            "$@"
+}
+
+windows_ssh_interactive() {
+    ssh \
+        -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+        -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=10 \
+        -o ServerAliveCountMax=3 \
+        -o StrictHostKeyChecking=accept-new \
+        -p "$WINDOWS_SSH_PORT" \
+        "${WINDOWS_SSH_HOST}"
+}
+
+windows_script() {
+    local script_path="$1"
+
+    timeout \
+        --signal=TERM \
+        --kill-after=10s \
+        "$WINDOWS_SCRIPT_TIMEOUT" \
+        ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+            -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 \
+            -o StrictHostKeyChecking=accept-new \
+            -p "$WINDOWS_SSH_PORT" \
+            "${WINDOWS_SSH_HOST}" \
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${script_path}\""
+}
+
+wait_for_camera_online() {
+    local attempts="${1:-$CAMERA_ON_ATTEMPTS}"
+    local attempt
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if ping_ok "$CAMERA_IP"; then
+            log "${CAMERA_NAME} is online at ${CAMERA_IP}"
+            return 0
+        fi
+
+        log "Waiting for camera: ${attempt}/${attempts}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    return 1
+}
+
+wait_for_camera_offline() {
+    local attempts="${1:-$CAMERA_OFF_ATTEMPTS}"
+    local attempt
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if ! ping_ok "$CAMERA_IP"; then
+            log "${CAMERA_NAME} is offline"
+            return 0
+        fi
+
+        log "Waiting for camera to turn off: ${attempt}/${attempts}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    return 1
+}
+
+wait_for_pc_online() {
+    local attempts="${1:-$PC_ONLINE_ATTEMPTS}"
+    local attempt
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+            log "Windows SSH is ready at ${MEDIA_PC_IP}:${WINDOWS_SSH_PORT}"
+            return 0
+        fi
+
+        log "Waiting for Windows SSH: ${attempt}/${attempts}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    return 1
+}
+
+wait_for_pc_offline() {
+    local attempts="${1:-$PC_OFFLINE_ATTEMPTS}"
+    local attempt
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+            log "Windows SSH is offline"
+            return 0
+        fi
+
+        log "Waiting for computer to go offline: ${attempt}/${attempts}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    return 1
+}
+
+camera_on() {
+    local response
+    local rc
+
+    if ping_ok "$CAMERA_IP"; then
+        log "${CAMERA_NAME} is already online at ${CAMERA_IP}"
+        result true camera-on "Camera was already online"
+        return 0
+    fi
+
+    log "Enabling PoE port ${CAMERA_POE_PORT} for ${CAMERA_NAME}"
+
+    response="$(poe_request on 2>&1)"
+    rc=$?
+
+    if [[ "$rc" -eq 124 ]]; then
+        result false camera-on "PoE request timed out"
+        return 1
+    fi
+
+    if [[ "$rc" -ne 0 ]]; then
+        printf '%s\n' "$response"
+        result false camera-on "PoE API request failed"
+        return 1
+    fi
+
+    printf '%s\n' "$response"
+
+    if ! grep -q '"success":true' <<<"$response"; then
+        result false camera-on "PoE API did not report success"
+        return 1
+    fi
+
+    if wait_for_camera_online "$CAMERA_ON_ATTEMPTS"; then
+        result true camera-on "Camera is online"
+        return 0
+    fi
+
+    result false camera-on "Camera did not become reachable before the timeout"
+    return 1
+}
+
+camera_off() {
+    local response
+    local rc
+
+    if ! ping_ok "$CAMERA_IP"; then
+        log "${CAMERA_NAME} is already offline"
+        result true camera-off "Camera was already offline"
+        return 0
+    fi
+
+    log "Disabling PoE port ${CAMERA_POE_PORT} for ${CAMERA_NAME}"
+
+    response="$(poe_request off 2>&1)"
+    rc=$?
+
+    if [[ "$rc" -eq 124 ]]; then
+        result false camera-off "PoE request timed out"
+        return 1
+    fi
+
+    if [[ "$rc" -ne 0 ]]; then
+        printf '%s\n' "$response"
+        result false camera-off "PoE API request failed"
+        return 1
+    fi
+
+    printf '%s\n' "$response"
+
+    if ! grep -q '"success":true' <<<"$response"; then
+        result false camera-off "PoE API did not report success"
+        return 1
+    fi
+
+    if wait_for_camera_offline "$CAMERA_OFF_ATTEMPTS"; then
+        result true camera-off "Camera is offline"
+        return 0
+    fi
+
+    result false camera-off "Camera still responds after PoE was disabled"
+    return 1
+}
+
+camera_status() {
+    echo "CAMERA_NAME=${CAMERA_NAME}"
+    echo "CAMERA_IP=${CAMERA_IP}"
+    echo "CAMERA_MAC=${CAMERA_MAC}"
+    echo "CAMERA_POE_PORT=${CAMERA_POE_PORT}"
+
+    if ping_ok "$CAMERA_IP"; then
+        echo "CAMERA_STATE=online"
+        result true camera-status "Camera is online"
+        return 0
+    fi
+
+    echo "CAMERA_STATE=offline"
+    result false camera-status "Camera is offline"
+    return 1
+}
+
+camera_preset() {
+    local preset="${1:-}"
+
+    if [[ ! "$preset" =~ ^[0-9]+$ ]]; then
+        echo "Usage: media camera preset <number>" >&2
+        return 1
+    fi
+
+    if ! ping_ok "$CAMERA_IP"; then
+        result false camera-preset "Camera is offline"
+        return 1
+    fi
+
+    log "Recalling camera preset ${preset} on ${CAMERA_NAME}"
+
+    "$PY" "$TOOLS_DIR/obsbot_preset.py" \
+        --ip "$CAMERA_IP" \
+        --port "$CAMERA_VISCA_PORT" \
+        --preset "$preset"
+}
+
+pc_wake() {
+    local attempt
+
+    if tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        log "Media PC is already awake and SSH-ready"
+        result true pc-wake "Computer was already awake"
+        return 0
+    fi
+
+    log "Sending Wake-on-LAN to ${MEDIA_PC_MAC}"
+
+    for ((attempt=1; attempt<=WAKE_PACKET_COUNT; attempt++)); do
+        wakeonlan \
+            -i "$MEDIA_BROADCAST" \
+            -p 9 \
+            "$MEDIA_PC_MAC"
+        sleep "$WAKE_PACKET_INTERVAL"
+    done
+
+    if wait_for_pc_online "$PC_ONLINE_ATTEMPTS"; then
+        result true pc-wake "Computer is awake and SSH-ready"
+        return 0
+    fi
+
+    result false pc-wake "Computer did not become SSH-ready before the timeout"
+    return 1
+}
+
+pc_status() {
+    local ping_state=false
+    local ssh_state=false
+
+    if ping_ok "$MEDIA_PC_IP"; then
+        ping_state=true
+    fi
+
+    if tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        ssh_state=true
+    fi
+
+    echo "PC_IP=${MEDIA_PC_IP}"
+    echo "PC_MAC=${MEDIA_PC_MAC}"
+    echo "PC_PING=${ping_state}"
+    echo "PC_SSH=${ssh_state}"
+
+    if [[ "$ssh_state" == true ]]; then
+        echo "PC_STATE=awake"
+        result true pc-status "Computer is awake"
+        return 0
+    fi
+
+    if [[ "$ping_state" == true ]]; then
+        echo "PC_STATE=network-visible-but-not-ready"
+        result false pc-status "Computer responds to ping but SSH is unavailable"
+        return 2
+    fi
+
+    echo "PC_STATE=offline-or-sleeping"
+    result false pc-status "Computer is offline or sleeping"
+    return 1
+}
+
+ndi_start() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        result false ndi-start "Computer SSH is unavailable"
+        return 1
+    fi
+
+    log "Enabling and starting NDI watchdog"
+
+    windows_script "$WINDOWS_NDI_START"
+    rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        result true ndi-start "NDI is enabled and healthy"
+        return 0
+    fi
+
+    if [[ "$rc" -eq 124 ]]; then
+        result false ndi-start "NDI startup timed out; Windows may be waiting for a user sign-in"
+        return 2
+    fi
+
+    result false ndi-start "Windows NDI start script failed; Windows may be waiting for a user sign-in"
+    return 1
+}
+
+ndi_stop() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        result true ndi-stop "Computer is already offline"
+        return 0
+    fi
+
+    log "Stopping NDI and disabling automatic recovery"
+
+    windows_script "$WINDOWS_NDI_STOP"
+    rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        result true ndi-stop "NDI stopped intentionally"
+        return 0
+    fi
+
+    if [[ "$rc" -eq 124 ]]; then
+        result false ndi-stop "NDI stop script timed out"
+        return 2
+    fi
+
+    result false ndi-stop "Windows NDI stop script failed"
+    return 1
+}
+
+ndi_status() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        echo "NDI_STATE=computer-offline"
+        result false ndi-status "Computer SSH is unavailable"
+        return 1
+    fi
+
+    windows_script "$WINDOWS_NDI_STATUS"
+    rc=$?
+
+    if [[ "$rc" -eq 124 ]]; then
+        echo "NDI_STATE=status-timeout"
+        result false ndi-status "NDI status check timed out"
+        return 2
+    fi
+
+    return "$rc"
+}
+
+ndi_restart() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        result false ndi-restart "Computer SSH is unavailable"
+        return 1
+    fi
+
+    log "Performing clean NDI restart"
+
+    windows_script "$WINDOWS_NDI_START"
+    rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        result true ndi-restart "NDI restarted successfully"
+        return 0
+    fi
+
+    if [[ "$rc" -eq 124 ]]; then
+        result false ndi-restart "NDI restart timed out; Windows may be waiting for a user sign-in"
+        return 2
+    fi
+
+    result false ndi-restart "NDI restart failed"
+    return 1
+}
+
+pc_sleep() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        result true pc-sleep "Computer was already unavailable"
+        return 0
+    fi
+
+    ndi_stop || true
+
+    log "Putting Windows computer to sleep"
+
+    windows_ssh \
+        'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Add-Type -TypeDefinition '\''using System.Runtime.InteropServices; public static class SleepControl { [DllImport(\"powrprof.dll\", SetLastError=true)] public static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent); }'\''; [SleepControl]::SetSuspendState($false,$false,$false)"' \
+        >/dev/null 2>&1
+    rc=$?
+
+    # SSH often disconnects while Windows is entering sleep. The offline check below
+    # is the source of truth, so a non-zero SSH result is not automatically a failure.
+    if [[ "$rc" -eq 124 ]]; then
+        log "Sleep command timed out; checking whether the computer went offline"
+    fi
+
+    sleep 10
+
+    if wait_for_pc_offline "$PC_OFFLINE_ATTEMPTS"; then
+        result true pc-sleep "Computer entered sleep"
+        return 0
+    fi
+
+    result false pc-sleep "Computer still appears awake"
+    return 1
+}
+
+pc_shutdown() {
+    local rc
+
+    if ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT"; then
+        result true pc-shutdown "Computer was already offline"
+        return 0
+    fi
+
+    ndi_stop || true
+
+    log "Shutting down Windows computer"
+
+    windows_ssh \
+        'shutdown.exe /s /f /t 0' \
+        >/dev/null 2>&1
+    rc=$?
+
+    # SSH normally disconnects during shutdown. Verify the final state below.
+    if [[ "$rc" -eq 124 ]]; then
+        log "Shutdown command timed out; checking whether the computer went offline"
+    fi
+
+    sleep 10
+
+    if wait_for_pc_offline "$PC_OFFLINE_ATTEMPTS"; then
+        result true pc-shutdown "Computer shut down"
+        return 0
+    fi
+
+    result false pc-shutdown "Computer still appears awake"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Mac Mini (OBS host)
+# ---------------------------------------------------------------------------
+
+require_mac_config() {
+    local action="$1"
+
+    if [[ -z "$MAC_MINI_IP" ]]; then
+        result false "$action" "MAC_MINI_IP is not set in ${CONFIG_FILE}"
+        return 1
+    fi
+
+    return 0
+}
+
+mac_ssh() {
+    timeout \
+        --signal=TERM \
+        --kill-after=10s \
+        "$SSH_COMMAND_TIMEOUT" \
+        ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+            -o ConnectionAttempts=1 \
+            -o StrictHostKeyChecking=accept-new \
+            -p "$MAC_SSH_PORT" \
+            "$MAC_SSH_HOST" \
+            "$@"
+}
+
+mac_ssh_interactive() {
+    ssh \
+        -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+        -o StrictHostKeyChecking=accept-new \
+        -p "$MAC_SSH_PORT" \
+        "$MAC_SSH_HOST"
+}
+
+wait_for_mac_online() {
+    local attempts="${1:-$MAC_ONLINE_ATTEMPTS}"
+    local attempt
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+            log "Mac Mini SSH is ready at ${MAC_MINI_IP}:${MAC_SSH_PORT}"
+            return 0
+        fi
+
+        log "Waiting for Mac Mini SSH: ${attempt}/${attempts}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    return 1
+}
+
+mac_status() {
+    require_mac_config mac-status || return 1
+
+    local ping_state=false
+    local ssh_state=false
+    local obs_state=false
+
+    ping_ok "$MAC_MINI_IP" && ping_state=true
+    tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT" && ssh_state=true
+    tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT" && obs_state=true
+
+    echo "MAC_IP=${MAC_MINI_IP}"
+    echo "MAC_PING=${ping_state}"
+    echo "MAC_SSH=${ssh_state}"
+    echo "OBS_WEBSOCKET=${obs_state}"
+
+    if [[ "$ssh_state" == true ]]; then
+        echo "MAC_STATE=awake"
+        result true mac-status "Mac Mini is awake"
+        return 0
+    fi
+
+    if [[ "$ping_state" == true ]]; then
+        echo "MAC_STATE=network-visible-but-not-ready"
+        result false mac-status "Mac Mini responds to ping but SSH is unavailable (is Remote Login on?)"
+        return 2
+    fi
+
+    echo "MAC_STATE=offline-or-sleeping"
+    result false mac-status "Mac Mini is offline or sleeping"
+    return 1
+}
+
+mac_wake() {
+    require_mac_config mac-wake || return 1
+
+    local attempt
+
+    if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+        log "Mac Mini is already awake and SSH-ready"
+        result true mac-wake "Mac Mini was already awake"
+        return 0
+    fi
+
+    if [[ -n "$MAC_MINI_MAC" ]]; then
+        log "Sending Wake-on-LAN to Mac Mini ${MAC_MINI_MAC}"
+
+        for ((attempt=1; attempt<=WAKE_PACKET_COUNT; attempt++)); do
+            wakeonlan \
+                -i "$MEDIA_BROADCAST" \
+                -p 9 \
+                "$MAC_MINI_MAC"
+            sleep "$WAKE_PACKET_INTERVAL"
+        done
+    else
+        log "MAC_MINI_MAC is not set; cannot send Wake-on-LAN, waiting for the Mac Mini"
+    fi
+
+    if wait_for_mac_online "$MAC_ONLINE_ATTEMPTS"; then
+        result true mac-wake "Mac Mini is awake and SSH-ready"
+        return 0
+    fi
+
+    result false mac-wake "Mac Mini did not become SSH-ready before the timeout"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# OBS on the Mac Mini (obs-websocket via obs_ctl.py)
+# ---------------------------------------------------------------------------
+
+obs_ctl() {
+    OBS_WS_HOST="$OBS_WS_HOST" \
+    OBS_WS_PORT="$OBS_WS_PORT" \
+    OBS_WS_PASSWORD="$OBS_WS_PASSWORD" \
+    OBS_REQUIRED_INPUTS="$OBS_REQUIRED_INPUTS" \
+        "$PY" "$TOOLS_DIR/obs_ctl.py" "$@"
+}
+
+obs_open() {
+    require_mac_config obs-open || return 1
+
+    local attempt
+
+    if tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        log "OBS is already running (WebSocket ${OBS_WS_HOST}:${OBS_WS_PORT} open)"
+        result true obs-open "OBS was already running"
+        return 0
+    fi
+
+    if ! tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+        result false obs-open "Mac Mini SSH is unavailable"
+        return 1
+    fi
+
+    if [[ -z "$MAC_SSH_HOST" ]]; then
+        result false obs-open "MAC_SSH_HOST is not set in ${CONFIG_FILE}"
+        return 1
+    fi
+
+    log "Launching ${OBS_APP_NAME} on the Mac Mini"
+
+    if ! mac_ssh "open -a '${OBS_APP_NAME}'" >/dev/null 2>&1; then
+        result false obs-open "Could not launch OBS over SSH (check Remote Login and the SSH key)"
+        return 1
+    fi
+
+    for ((attempt=1; attempt<=OBS_OPEN_ATTEMPTS; attempt++)); do
+        if tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+            log "OBS WebSocket is up"
+            result true obs-open "OBS is running"
+            return 0
+        fi
+
+        log "Waiting for OBS WebSocket: ${attempt}/${OBS_OPEN_ATTEMPTS}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    result false obs-open "OBS launched but its WebSocket server never came up (OBS > Tools > WebSocket Server Settings)"
+    return 1
+}
+
+obs_status() {
+    require_mac_config obs-status || return 1
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        echo "OBS_STATE=not-running"
+        result false obs-status "OBS is not running (WebSocket port ${OBS_WS_PORT} closed on ${OBS_WS_HOST})"
+        return 1
+    fi
+
+    obs_ctl status
+}
+
+obs_start() {
+    require_mac_config obs-start || return 1
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        obs_open || return 1
+    fi
+
+    log "Starting the OBS stream"
+    obs_ctl start
+}
+
+obs_stop() {
+    require_mac_config obs-stop || return 1
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        result true obs-stop "OBS is not running"
+        return 0
+    fi
+
+    log "Stopping the OBS stream"
+    obs_ctl stop
+}
+
+# ---------------------------------------------------------------------------
+# Stream orchestration
+# ---------------------------------------------------------------------------
+
+stream_prep() {
+    local up_rc=0
+    local preset_rc=0
+    local mac_rc=0
+    local obs_rc=0
+
+    log "Prepping the livestream"
+
+    echo "=== MEDIA SYSTEM ==="
+    system_up || up_rc=$?
+
+    if [[ -n "$CAMERA_PRESET_PREP" ]]; then
+        echo
+        echo "=== CAMERA PRESET ==="
+        if ping_ok "$CAMERA_IP"; then
+            camera_preset "$CAMERA_PRESET_PREP" || preset_rc=$?
+        else
+            preset_rc=1
+            log "Skipping camera preset because the camera is offline"
+        fi
+    fi
+
+    echo
+    echo "=== MAC MINI ==="
+    mac_wake || mac_rc=$?
+
+    echo
+    echo "=== OBS ==="
+    if [[ "$mac_rc" -eq 0 ]]; then
+        obs_open || obs_rc=$?
+        if [[ "$obs_rc" -eq 0 ]]; then
+            obs_ctl status || obs_rc=$?
+        fi
+    else
+        obs_rc=1
+        log "Skipping OBS because the Mac Mini is not reachable"
+    fi
+
+    echo
+    echo "UP_RESULT=${up_rc}"
+    echo "PRESET_RESULT=${preset_rc}"
+    echo "MAC_RESULT=${mac_rc}"
+    echo "OBS_RESULT=${obs_rc}"
+
+    if [[ "$up_rc" -eq 0 && "$preset_rc" -eq 0 && "$mac_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
+        result true stream-prep "Stream is prepped: media system up, camera framed, OBS ready"
+        return 0
+    fi
+
+    if [[ ( "$up_rc" -eq 0 || "$up_rc" -eq 2 ) && "$mac_rc" -eq 0 && ( "$obs_rc" -eq 0 || "$obs_rc" -eq 2 ) ]]; then
+        local notes=()
+        [[ "$up_rc" -eq 2 ]] && notes+=("NDI needs attention")
+        [[ "$preset_rc" -ne 0 ]] && notes+=("camera preset failed")
+        [[ "$obs_rc" -eq 2 ]] && notes+=("OBS is missing sources")
+        partial_result stream-prep "Stream is mostly prepped: $(IFS='; '; echo "${notes[*]}")"
+        return 2
+    fi
+
+    result false stream-prep "Stream prep completed with errors"
+    return 1
+}
+
+stream_start() {
+    local prep_rc=0
+
+    if ! ping_ok "$CAMERA_IP" \
+        || ! tcp_ok "$MEDIA_PC_IP" "$WINDOWS_SSH_PORT" \
+        || ! tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT" \
+        || ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        log "Stream is not prepped yet - running stream prep first"
+        stream_prep || prep_rc=$?
+
+        if [[ "$prep_rc" -eq 1 ]]; then
+            result false stream-start "Stream prep failed, so the stream was not started"
+            return 1
+        fi
+        echo
+    fi
+
+    echo "=== OBS STREAM ==="
+    obs_start
+}
+
+stream_stop() {
+    echo "=== OBS STREAM ==="
+    obs_stop
+}
+
+stream_status() {
+    local camera_rc=0
+    local pc_rc=0
+    local mac_rc=0
+    local obs_rc=0
+    local obs_output
+
+    echo "=== CAMERA ==="
+    camera_status || camera_rc=$?
+
+    echo
+    echo "=== COMPUTER ==="
+    pc_status || pc_rc=$?
+
+    echo
+    echo "=== MAC MINI ==="
+    mac_status || mac_rc=$?
+
+    echo
+    echo "=== OBS ==="
+    if [[ "$mac_rc" -eq 0 ]]; then
+        obs_output="$(obs_status)" || obs_rc=$?
+        printf '%s\n' "$obs_output"
+    else
+        echo "OBS_STATE=mac-offline"
+        obs_rc=1
+    fi
+
+    echo
+    echo "CAMERA_RESULT=${camera_rc}"
+    echo "PC_RESULT=${pc_rc}"
+    echo "MAC_RESULT=${mac_rc}"
+    echo "OBS_RESULT=${obs_rc}"
+
+    if [[ "$camera_rc" -eq 0 && "$pc_rc" -eq 0 && "$mac_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
+        if grep -q '^OBS_STREAMING=true' <<<"${obs_output:-}"; then
+            result true stream-status "Stream is LIVE and all components are healthy"
+        else
+            result true stream-status "Everything is ready; the stream is not running yet"
+        fi
+        return 0
+    fi
+
+    result false stream-status "One or more stream components are not ready"
+    return 1
+}
+
+system_up() {
+    local camera_rc=0
+    local pc_rc=0
+    local ndi_rc=0
+    local camera_pid
+    local pc_pid
+    local camera_log
+    local pc_log
+    local camera_status_file
+    local pc_status_file
+
+    camera_log="$(mktemp)"
+    pc_log="$(mktemp)"
+    camera_status_file="$(mktemp)"
+    pc_status_file="$(mktemp)"
+
+    cleanup_system_up() {
+        rm -f \
+            "$camera_log" \
+            "$pc_log" \
+            "$camera_status_file" \
+            "$pc_status_file"
+    }
+
+    trap cleanup_system_up RETURN
+
+    log "Starting church media system"
+    log "Starting camera and computer simultaneously"
+
+    (
+        camera_on >"$camera_log" 2>&1
+        printf '%s\n' "$?" >"$camera_status_file"
+    ) &
+    camera_pid=$!
+
+    (
+        pc_wake >"$pc_log" 2>&1
+        printf '%s\n' "$?" >"$pc_status_file"
+    ) &
+    pc_pid=$!
+
+    wait "$camera_pid" || true
+    wait "$pc_pid" || true
+
+    if [[ -s "$camera_status_file" ]]; then
+        camera_rc="$(cat "$camera_status_file")"
+    else
+        camera_rc=1
+    fi
+
+    if [[ -s "$pc_status_file" ]]; then
+        pc_rc="$(cat "$pc_status_file")"
+    else
+        pc_rc=1
+    fi
+
+    echo
+    echo "=== CAMERA STARTUP ==="
+    cat "$camera_log"
+
+    echo
+    echo "=== COMPUTER STARTUP ==="
+    cat "$pc_log"
+
+    if [[ "$pc_rc" -eq 0 ]]; then
+        echo
+        echo "=== NDI STARTUP ==="
+        ndi_start
+        ndi_rc=$?
+    else
+        ndi_rc=1
+        log "Skipping NDI because computer is not SSH-ready"
+    fi
+
+    echo
+    echo "CAMERA_RESULT=${camera_rc}"
+    echo "PC_RESULT=${pc_rc}"
+    echo "NDI_RESULT=${ndi_rc}"
+
+    if [[ "$camera_rc" -eq 0 &&
+          "$pc_rc" -eq 0 &&
+          "$ndi_rc" -eq 0 ]]; then
+        result true up "Church media system is ready"
+        return 0
+    fi
+
+    if [[ "$camera_rc" -eq 0 &&
+          "$pc_rc" -eq 0 &&
+          "$ndi_rc" -ne 0 ]]; then
+        partial_result up "Camera and computer started, but NDI could not start; Windows may need a user sign-in"
+        return 2
+    fi
+
+    result false up "Startup completed with errors"
+    return 1
+}
+
+system_sleep() {
+    local pc_rc=0
+    local camera_rc=0
+    local pc_pid
+    local camera_pid
+    local pc_log
+    local camera_log
+    local pc_status_file
+    local camera_status_file
+
+    pc_log="$(mktemp)"
+    camera_log="$(mktemp)"
+    pc_status_file="$(mktemp)"
+    camera_status_file="$(mktemp)"
+
+    cleanup_system_sleep() {
+        rm -f \
+            "$pc_log" \
+            "$camera_log" \
+            "$pc_status_file" \
+            "$camera_status_file"
+    }
+
+    trap cleanup_system_sleep RETURN
+
+    log "Sleeping computer and powering off camera simultaneously"
+
+    (
+        pc_sleep >"$pc_log" 2>&1
+        printf '%s\n' "$?" >"$pc_status_file"
+    ) &
+    pc_pid=$!
+
+    (
+        camera_off >"$camera_log" 2>&1
+        printf '%s\n' "$?" >"$camera_status_file"
+    ) &
+    camera_pid=$!
+
+    wait "$pc_pid" || true
+    wait "$camera_pid" || true
+
+    if [[ -s "$pc_status_file" ]]; then
+        pc_rc="$(cat "$pc_status_file")"
+    else
+        pc_rc=1
+    fi
+
+    if [[ -s "$camera_status_file" ]]; then
+        camera_rc="$(cat "$camera_status_file")"
+    else
+        camera_rc=1
+    fi
+
+    echo
+    echo "=== COMPUTER SLEEP ==="
+    cat "$pc_log"
+
+    echo
+    echo "=== CAMERA SHUTDOWN ==="
+    cat "$camera_log"
+
+    echo
+    echo "PC_RESULT=${pc_rc}"
+    echo "CAMERA_RESULT=${camera_rc}"
+
+    if [[ "$pc_rc" -eq 0 && "$camera_rc" -eq 0 ]]; then
+        result true sleep "Computer sleeping and camera powered off"
+        return 0
+    fi
+
+    result false sleep "Sleep sequence completed with errors"
+    return 1
+}
+
+system_down() {
+    local pc_rc=0
+    local camera_rc=0
+    local pc_pid
+    local camera_pid
+    local pc_log
+    local camera_log
+    local pc_status_file
+    local camera_status_file
+
+    pc_log="$(mktemp)"
+    camera_log="$(mktemp)"
+    pc_status_file="$(mktemp)"
+    camera_status_file="$(mktemp)"
+
+    cleanup_system_down() {
+        rm -f \
+            "$pc_log" \
+            "$camera_log" \
+            "$pc_status_file" \
+            "$camera_status_file"
+    }
+
+    trap cleanup_system_down RETURN
+
+    log "Shutting down computer and powering off camera simultaneously"
+
+    (
+        pc_shutdown >"$pc_log" 2>&1
+        printf '%s\n' "$?" >"$pc_status_file"
+    ) &
+    pc_pid=$!
+
+    (
+        camera_off >"$camera_log" 2>&1
+        printf '%s\n' "$?" >"$camera_status_file"
+    ) &
+    camera_pid=$!
+
+    wait "$pc_pid" || true
+    wait "$camera_pid" || true
+
+    if [[ -s "$pc_status_file" ]]; then
+        pc_rc="$(cat "$pc_status_file")"
+    else
+        pc_rc=1
+    fi
+
+    if [[ -s "$camera_status_file" ]]; then
+        camera_rc="$(cat "$camera_status_file")"
+    else
+        camera_rc=1
+    fi
+
+    echo
+    echo "=== COMPUTER SHUTDOWN ==="
+    cat "$pc_log"
+
+    echo
+    echo "=== CAMERA SHUTDOWN ==="
+    cat "$camera_log"
+
+    echo
+    echo "PC_RESULT=${pc_rc}"
+    echo "CAMERA_RESULT=${camera_rc}"
+
+    if [[ "$pc_rc" -eq 0 && "$camera_rc" -eq 0 ]]; then
+        result true down "Church media system is powered down"
+        return 0
+    fi
+
+    result false down "Shutdown completed with errors"
+    return 1
+}
+
+system_status() {
+    local camera_rc=0
+    local pc_rc=0
+    local ndi_rc=0
+
+    echo "=== CAMERA ==="
+    camera_status || camera_rc=$?
+
+    echo
+    echo "=== COMPUTER ==="
+    pc_status || pc_rc=$?
+
+    echo
+    echo "=== NDI ==="
+
+    if [[ "$pc_rc" -eq 0 ]]; then
+        ndi_status || ndi_rc=$?
+    else
+        echo "NDI_STATE=computer-offline"
+        ndi_rc=1
+    fi
+
+    echo
+    echo "CAMERA_RESULT=${camera_rc}"
+    echo "PC_RESULT=${pc_rc}"
+    echo "NDI_RESULT=${ndi_rc}"
+
+    if [[ "$camera_rc" -eq 0 &&
+          "$pc_rc" -eq 0 &&
+          "$ndi_rc" -eq 0 ]]; then
+        result true status "All media systems are healthy"
+        return 0
+    fi
+
+    result false status "One or more media systems are unavailable"
+    return 1
+}
+
+usage() {
+    cat <<'EOF'
+Awesome Church Media Controller
+
+Usage:
+  media <command> [action]
+
+Commands:
+  up                      Start the camera and media PC, then verify NDI
+  sleep                   Stop NDI, sleep the PC, and power off the camera
+  down                    Stop NDI, shut down the PC, and power off the camera
+  status                  Show the status of the camera, PC, and NDI
+  ssh                     Open an SSH session to the media PC
+
+  stream prep             up + camera preset + wake Mac Mini + open OBS + check sources
+  stream start            Start streaming in OBS (runs prep first if needed)
+  stream stop             Stop streaming in OBS
+  stream status           Readiness of camera, PC, Mac Mini and OBS
+
+  camera on               Power on the camera
+  camera off              Power off the camera
+  camera status           Show camera status
+  camera preset N         Move the camera to saved preset N (VISCA over IP)
+
+  pc wake                 Wake the media PC
+  pc sleep                Put the media PC to sleep
+  pc off                  Shut down the media PC
+  pc status               Show media PC status
+
+  ndi on                  Enable and start NDI
+  ndi off                 Stop NDI and disable automatic recovery
+  ndi restart             Restart NDI
+  ndi status              Show NDI status
+
+  mac status              Show Mac Mini status
+  mac wake                Wake the Mac Mini (Wake-on-LAN, needs MAC_MINI_MAC)
+  mac ssh                 Open an SSH session to the Mac Mini
+
+  obs open                Launch OBS on the Mac Mini
+  obs start               Start streaming in OBS
+  obs stop                Stop streaming in OBS
+  obs status              OBS state, scene, sources, streaming flag
+
+  help                    Show this help message
+
+Examples:
+  media up
+  media stream prep
+  media stream start
+  media camera preset 1
+  media obs status
+EOF
+}
+
+main_command="${1:-}"
+sub_command="${2:-}"
+third_arg="${3:-}"
+
+case "$main_command" in
+    up|start)
+        system_up
+        ;;
+
+    down|stop|off)
+        system_down
+        ;;
+
+    sleep)
+        system_sleep
+        ;;
+
+    status)
+        system_status
+        ;;
+
+    stream)
+        case "$sub_command" in
+            prep|prepare|ready)
+                stream_prep
+                ;;
+            start|go|live)
+                stream_start
+                ;;
+            stop|end)
+                stream_stop
+                ;;
+            status)
+                stream_status
+                ;;
+            *)
+                echo "Usage: media stream {prep|start|stop|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    camera)
+        case "$sub_command" in
+            on|start)
+                camera_on
+                ;;
+            off|stop)
+                camera_off
+                ;;
+            status)
+                camera_status
+                ;;
+            preset)
+                camera_preset "$third_arg"
+                ;;
+            *)
+                echo "Usage: media camera {on|off|status|preset N}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    pc)
+        case "$sub_command" in
+            wake|on|start)
+                pc_wake
+                ;;
+            sleep)
+                pc_sleep
+                ;;
+            off|down|shutdown|stop)
+                pc_shutdown
+                ;;
+            status)
+                pc_status
+                ;;
+            *)
+                echo "Usage: media pc {wake|sleep|off|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    ndi)
+        case "$sub_command" in
+            on|start)
+                ndi_start
+                ;;
+            off|stop)
+                ndi_stop
+                ;;
+            restart)
+                ndi_restart
+                ;;
+            status)
+                ndi_status
+                ;;
+            *)
+                echo "Usage: media ndi {on|off|restart|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    mac)
+        case "$sub_command" in
+            status)
+                mac_status
+                ;;
+            wake|on)
+                mac_wake
+                ;;
+            ssh)
+                mac_ssh_interactive
+                ;;
+            *)
+                echo "Usage: media mac {status|wake|ssh}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    obs)
+        case "$sub_command" in
+            open|launch)
+                obs_open
+                ;;
+            start)
+                obs_start
+                ;;
+            stop)
+                obs_stop
+                ;;
+            status)
+                obs_status
+                ;;
+            *)
+                echo "Usage: media obs {open|start|stop|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    ssh)
+        windows_ssh_interactive
+        ;;
+
+    help|-h|--help|"")
+        usage
+        ;;
+
+    *)
+        echo "Unknown action: $main_command" >&2
+        usage
+        exit 1
+        ;;
+esac
