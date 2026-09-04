@@ -164,11 +164,13 @@
       background: #ddd;
     }
 
-    /* Portrait photos: narrower card with a 3:4 frame whose height matches the
-       landscape frames (62/99 * 3/4 = .4697 of the photo width), so rows stay
-       aligned and nothing gets cropped into a landscape strip. */
+    /* Portrait photos: narrower card with a 3:4 frame so nothing gets cropped
+       into a landscape strip. .58 of the landscape photo width makes the
+       portrait card ~22% taller than its landscape neighbours (still inside the
+       row spacing) and ~70% of their area, so it reads as the same size print
+       turned upright rather than a smaller one. (.4697 would match heights.) */
     .polaroid.portrait {
-      width: calc((var(--card-w) - 20px) * .4697 + 20px);
+      width: calc((var(--card-w) - 20px) * .58 + 20px);
     }
 
     .polaroid.portrait .photo-frame {
