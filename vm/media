@@ -807,7 +807,7 @@ stream_prep() {
     log "Prepping the livestream"
 
     echo "=== MEDIA SYSTEM ==="
-    system_up || up_rc=$?
+    UP_SKIP_PRESET=1 system_up || up_rc=$?
 
     if [[ -n "$CAMERA_PRESET_PREP" ]]; then
         echo
@@ -1011,10 +1011,33 @@ system_up() {
         log "Skipping NDI because computer is not SSH-ready"
     fi
 
+    # Frame the camera as part of "media up" too, so a plain "turn on all
+    # media" lands on the Sunday framing. stream_prep sets UP_SKIP_PRESET=1
+    # because it recalls (and reports) the preset itself.
+    local preset_rc=0
+    if [[ -n "$CAMERA_PRESET_PREP" && "${UP_SKIP_PRESET:-0}" != "1" ]]; then
+        echo
+        echo "=== CAMERA PRESET ==="
+        if [[ "$camera_rc" -eq 0 ]]; then
+            camera_preset "$CAMERA_PRESET_PREP" || preset_rc=$?
+        else
+            preset_rc=1
+            log "Skipping camera preset because the camera did not start"
+        fi
+    fi
+
     echo
     echo "CAMERA_RESULT=${camera_rc}"
     echo "PC_RESULT=${pc_rc}"
     echo "NDI_RESULT=${ndi_rc}"
+
+    if [[ "$camera_rc" -eq 0 &&
+          "$pc_rc" -eq 0 &&
+          "$ndi_rc" -eq 0 &&
+          "$preset_rc" -ne 0 ]]; then
+        partial_result up "Church media system is ready, but the camera preset could not be recalled"
+        return 2
+    fi
 
     if [[ "$camera_rc" -eq 0 &&
           "$pc_rc" -eq 0 &&
