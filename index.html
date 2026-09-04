@@ -1061,16 +1061,20 @@
       const usableW = vw - padX * 2;
       const usableH = vh - padY * 2;
       const smallRealPool = realPhotoCount > 0 && realPhotoCount <= 18;
+      // Card width scales with the screen (fraction of usable width) so a 4K TV
+      // and a 1080p monitor get the same *visual* proportions instead of a
+      // fixed pixel size. ~12.5% of the width => about 5 columns on 16:9.
       const responsiveMinWidth = smallRealPool
-        ? clamp(Math.sqrt(area) / 6.8, vw < 620 ? 140 : 180, 290)
-        : clamp(Math.sqrt(area) / 7.8, vw < 620 ? 118 : 156, 240);
+        ? usableW * 0.115
+        : usableW * 0.095;
       const minWidth = Math.max(
         vw < 620 ? MIN_CARD_WIDTH_MOBILE : MIN_CARD_WIDTH_DESKTOP,
         responsiveMinWidth
       );
-      const maxWidth = smallRealPool
-        ? Math.max(minWidth, clamp(Math.sqrt(area) / 4.6, 220, 340))
-        : Math.max(minWidth, clamp(Math.sqrt(area) / 5.2, 190, 290));
+      const maxWidth = Math.max(
+        minWidth,
+        smallRealPool ? usableW * 0.15 : usableW * 0.125
+      );
       const reservedAreas = getReservedAreas(vw, vh);
       let best = null;
 
@@ -1594,15 +1598,55 @@
       await waitForImages(el);
     }
 
-    function markCardOrientation(el) {
+    // Phone photos are often stored sideways with an EXIF "rotate" tag. The
+    // browser draws them upright, but naturalWidth/naturalHeight report the raw
+    // stored pixels (Safari especially), so a landscape shot can look portrait
+    // by the numbers. Measure the *rendered* box of a hidden probe instead.
+    const orientationCache = new Map();
+
+    function measureOrientation(src) {
+      if (orientationCache.has(src)) return Promise.resolve(orientationCache.get(src));
+
+      return new Promise(resolve => {
+        const probe = new Image();
+        probe.decoding = "async";
+        probe.style.cssText =
+          "position:absolute;left:-10000px;top:0;height:120px;width:auto;max-width:none;visibility:hidden;image-orientation:from-image;";
+
+        const finish = () => {
+          let portrait = false;
+          const renderedW = probe.offsetWidth;
+          const renderedH = probe.offsetHeight;
+          if (renderedW && renderedH) {
+            portrait = renderedH > renderedW;
+          } else if (probe.naturalWidth && probe.naturalHeight) {
+            portrait = probe.naturalHeight > probe.naturalWidth;
+          }
+          probe.remove();
+          orientationCache.set(src, portrait);
+          resolve(portrait);
+        };
+
+        probe.addEventListener("load", finish, { once: true });
+        probe.addEventListener("error", finish, { once: true });
+        document.body.appendChild(probe);
+        probe.src = src;
+      });
+    }
+
+    async function markCardOrientation(el) {
       const image = el.querySelector(".photo-frame img");
-      const portrait = Boolean(image && image.naturalWidth && image.naturalHeight > image.naturalWidth);
+      const src = image ? (image.currentSrc || image.src) : "";
+      if (!src) {
+        el.classList.remove("portrait");
+        return;
+      }
+      const portrait = await measureOrientation(src);
       el.classList.toggle("portrait", portrait);
     }
 
     function revealCardWhenReady(el, delay = 0) {
-      waitForCardImage(el).then(() => {
-        markCardOrientation(el);
+      waitForCardImage(el).then(() => markCardOrientation(el)).then(() => {
         setTimeout(() => {
           if (!elements.includes(el)) return;
           el.classList.remove("leaving");
