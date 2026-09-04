@@ -1,9 +1,14 @@
 param(
-  [string]$Target = "awesomechurch@192.168.2.18",
+  # user@host of the church VM. Pass -Target or set SIGNAGE_VM_TARGET so the
+  # address never has to live in this (public) repo.
+  [string]$Target = $env:SIGNAGE_VM_TARGET,
   [string]$RemoteDirectory = "/home/awesomechurch/photowall"
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $Target) {
+  throw "No target. Pass -Target user@host or set the SIGNAGE_VM_TARGET environment variable."
+}
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $transcript = Join-Path $root "deployment.log"
 $progressPath = Join-Path $root ".deploy-progress.json"
@@ -119,7 +124,8 @@ try {
   }
 
   Write-Host ""
-  Write-Host "Deployment complete: http://192.168.2.18:8000/"
+  $vmHost = ($Target -split "@")[-1]
+  Write-Host "Deployment complete: http://${vmHost}:8000/"
   Remove-Item -LiteralPath $progressPath -Force -ErrorAction SilentlyContinue
 } catch {
   Write-Error $_

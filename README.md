@@ -1,84 +1,66 @@
-# Church Signage SPA
+# Church Signage
 
-This project is a local signage display for the church TV. The display device
-opens one page and stays there; content and modes are controlled remotely
-without reloading the browser.
+Lobby TV display for Awesome Church, plus the media-control tooling that runs
+on the same church VM. The TV opens one page and stays there; content and
+modes are controlled remotely without reloading the browser.
 
-## End Result
+What the TV can show:
 
-After completing this setup:
+| Mode | Source | Notes |
+|---|---|---|
+| `wall` | Google Drive *Living Wall Photos* | Polaroid-style photo wall sized to real-world Instax dimensions for the TV's diagonal; portrait and landscape handled by real orientation; background music |
+| `photo` | Google Drive *Photo Slideshow* | One fullscreen photo at a time |
+| `slides` | Google Drive *Announcement Slides* | Ordered by filename (`001-…`, `002-…`) |
+| `live` | Local HLS stream (MediaMTX) | The livestream with the current sermon's title and details |
 
-- Wall photos are read from a Google Drive `Living Wall Photos` folder.
-- Fullscreen photos are read from a separate Google Drive `Photo Slideshow` folder.
-- Announcement slides are read from a Google Drive `Announcement Slides` folder.
-- Slides are ordered by filename.
-- The photo wall and photo slideshow use their own independent photo pools.
-- Firestore `appContent/signage` controls the active mode, live URL, and background music.
-- The backend (`awesome_church/backend`, not this project) watches `sermons` and updates
-  `appContent/signage`'s live title/body/meta/thumbnail whenever a newer sermon appears.
-  `liveUrl` is no longer auto-populated (the church runs local RTMP push, not YouTube) —
-  it's set by hand in Firebase console only, for a special event or test stream.
-- A real Firestore `onSnapshot` listener applies changes as soon as they arrive.
-- The TV changes modes and content without a page reload.
-- Drive images are cached on the church VM, so existing media survives an
-  internet interruption.
+Photos removed from Drive disappear on the next sync. Drive media is cached
+on the VM so the display survives an internet outage.
+
+This project is one piece of a larger setup. The Firestore project, the
+backend that mirrors sermon info here, and the Telegram assistant that
+switches modes are documented in the
+[awesome_church](https://github.com/Blackkingsman/awesome_church) repo
+(`docs/`).
 
 ## Architecture
 
 ```text
-Google Drive Living Wall Photos -----\
-Google Drive Photo Slideshow ---------> signage_bridge.js -> content.json -> SPA
-Google Drive Announcement Slides -----/
+Google Drive Living Wall Photos ─┐
+Google Drive Photo Slideshow ────┼─► signage_bridge.js ─► media/ + content.json ─┐
+Google Drive Announcement Slides ┘         ▲                                     │
+                                           │ onSnapshot (read-only)              ▼
+Firestore appContent/signage ──────────────┘ ─► control.json ──► server.js ──► index.html on the TV
 
-Firestore appContent/signage ---> onSnapshot (read-only) -> control.json + content.json
-
-  (elsewhere, in the awesome_church backend, NOT this project:)
-  Firestore sermons -----> appContent/signage live fields (title/body/meta/thumbnail, no liveUrl)
+Written elsewhere:
+  appContent/signage.mode                 ← Telegram assistant (n8n) or Firebase console
+  appContent/signage.live* (6 fields)     ← awesome_church backend, from the newest sermon
+  appContent/signage.liveUrl, music, wall ← humans, in the Firebase console
 ```
 
-This project only ever *reads* Firestore — it never writes to it. Sermon data is
-mirrored into `appContent/signage` server-side by the main backend
-(`awesome_church/backend/run.py`), which already watches `sermons` for other
-purposes. Keeping that write logic in one place avoids two independent
-processes racing to update the same document.
+- `signage_bridge.js` mirrors three Drive folders to disk every `syncSeconds`
+  (default 300), listens to `appContent/signage` in real time, and writes
+  `content.json` / `control.json`. It **only reads** Firestore.
+- `server.js` serves the page and the JSON files on the LAN and blocks the
+  service-account key.
+- `index.html` polls the JSON files and switches modes without a reload.
+- `vm/` holds the `media` controller for the AV gear (camera, media PC, NDI,
+  Mac Mini, OBS, livestream). See [vm/README.md](vm/README.md).
 
-The browser never receives the service account key. The local server only
-exposes `index.html`, `control.json`, `content.json`, and downloaded media.
+## 1. Google Cloud setup
 
-## 1. Google Cloud Setup
+Use the same Google Cloud project as the Firebase project.
 
-Use the same Google Cloud project as the existing Firebase project.
+1. **APIs & Services → Library** → enable the **Google Drive API**.
+2. **IAM & Admin → Service Accounts** → create a dedicated signage account
+   with a **read-only Firestore role** (e.g. Cloud Datastore Viewer). This
+   project never writes to Firestore.
+3. Create a JSON key, rename it `serviceAccountKey.json`, and place it next
+   to `signage_bridge.js`. It is gitignored and blocked by the web server.
 
-### Enable the Drive API
+## 2. Google Drive setup
 
-1. Open Google Cloud Console.
-2. Select the Firebase project.
-3. Open **APIs & Services > Library**.
-4. Find **Google Drive API** and enable it.
-
-### Create the service account key
-
-1. Open **IAM & Admin > Service Accounts**.
-2. Create a dedicated signage service account.
-3. Grant it a **read-only Firestore role** (e.g. Cloud Datastore Viewer) —
-   this project only ever reads `appContent/signage`, it never writes.
-4. Open the service account, select **Keys**, and create a JSON key.
-5. Download the key.
-6. Rename it to `serviceAccountKey.json`.
-7. Place it beside `signage_bridge.js` in this project.
-
-Expected location:
-
-```text
-C:\Users\Terry\OneDrive\Documents\photowall\serviceAccountKey.json
-```
-
-The key is ignored by Git and blocked by the local web server. Never publish or
-send this file publicly.
-
-## 2. Google Drive Setup
-
-Create these folders:
+Create three folders and share each with the service account's
+`client_email` as **Viewer**:
 
 ```text
 Living Wall/
@@ -87,163 +69,67 @@ Living Wall/
   Announcement Slides/
 ```
 
-Open `serviceAccountKey.json` and find its `client_email`. Share all three folders
-and `Slides` with that email as **Viewer**.
+Supported media: `.jpg .jpeg .png .webp .gif`. Export PowerPoint, Google
+Slides, or PDFs as fullscreen images before adding them to *Announcement
+Slides*. Slide filenames control order (`001-welcome.png`); photo filenames
+do not.
 
-Supported media:
-
-```text
-.jpg | .jpeg | .png | .webp | .gif
-```
-
-PowerPoint, Google Slides, and PDFs should be exported as full-screen image
-files before placing them in `Slides`.
-
-Photo filenames do not control presentation order. Slide filenames do:
-
-```text
-001-welcome.png
-002-this-week.png
-003-small-groups.png
-004-offering.png
-```
-
-Open each Drive folder and copy the ID from its URL:
-
-```text
-https://drive.google.com/drive/folders/THIS_PART_IS_THE_FOLDER_ID
-```
-
-Edit `signage.config.json`:
+Copy each folder's ID from its URL
+(`https://drive.google.com/drive/folders/<FOLDER_ID>`) into
+`signage.config.json` (start from `signage.config.example.json`):
 
 ```json
 {
   "serviceAccountKey": "./serviceAccountKey.json",
-  "firestore": {
-    "signageCollection": "appContent",
-    "signageDocument": "signage"
-  },
+  "firestore": { "signageCollection": "appContent", "signageDocument": "signage" },
   "drive": {
-    "photosFolderId": "YOUR_PHOTOS_FOLDER_ID",
-    "photoSlidesFolderId": "YOUR_PHOTO_SLIDES_FOLDER_ID",
-    "slidesFolderId": "YOUR_SLIDES_FOLDER_ID",
+    "photosFolderId": "…",
+    "photoSlidesFolderId": "…",
+    "slidesFolderId": "…",
     "syncSeconds": 300
-  }
+  },
+  "wall": { "eyebrow": "Community moments", "title": "Our week together", "screenInches": 65, "cardScale": 1 },
+  "live": { "label": "Live now", "title": "Join us inside.", "body": "…", "meta": "…" },
+  "music": { "enabled": true, "volume": 55 }
 }
 ```
 
-The bridge checks Drive every five minutes. Restarting the bridge also triggers
-an immediate sync.
+`signage.config.json` is gitignored.
 
-## 3. Firestore Setup
+## 3. Firestore document
 
-Create this document:
+`appContent/signage`, one flat document. Who writes each field:
 
-```text
-appContent/signage
+| Field | Type | Written by | Notes |
+|---|---|---|---|
+| `mode` | string | Telegram assistant, or by hand | `wall` / `photo` / `slides` / `live` |
+| `liveUrl` | string | by hand | HLS URL of the local MediaMTX server, e.g. `http://<mediamtx-host>:8888/live/index.m3u8`. YouTube links also work. Never auto-set. |
+| `backgroundMusicUrl` | string | by hand | YouTube link for the wall's background music |
+| `musicEnabled` | boolean | by hand | |
+| `musicVolume` | number | by hand | 0–100 |
+| `wallScreenInches` | number | by hand | TV diagonal; drives real-size polaroid cards. Overrides `wall.screenInches` in the config. |
+| `wallCardScale` | number | by hand | Multiplier on real Instax Wide size (1 = life size). Overrides `wall.cardScale`. |
+| `photoIntervalSeconds`, `slideIntervalSeconds` | number | by hand | Slideshow timing |
+| `liveLabel` | string | by hand | Optional label on the live screen |
+| `liveTitle`, `liveBody`, `liveMeta`, `liveSource`, `liveSourceSermonId`, `liveThumbnailUrl` | string | **awesome_church backend** | Mirrored from the newest published sermon. Don't edit by hand; the backend re-applies them. |
+
+Every change to this document reaches the TV within a second or two through
+the bridge's `onSnapshot` listener. No page reload.
+
+## 4. Running on the VM
+
+The VM is Debian. Requirements: `node`, `npm`, `python3`, `curl`.
+
+```bash
+git clone https://github.com/Blackkingsman/church-signage.git ~/photowall
+cd ~/photowall
+# add serviceAccountKey.json and signage.config.json (see above)
+./start_signage.sh          # npm ci, then starts the bridge and the server in the background
+./check_signage.sh          # health check; restarts both only if one is down
 ```
 
-Add these fields using their matching Firestore types:
-
-| Field | Type | Example |
-| --- | --- | --- |
-| `mode` | string | `wall` |
-| `liveUrl` | string | `https://www.youtube.com/watch?v=8WChqo2NYVw` |
-| `backgroundMusicUrl` | string | `https://www.youtube.com/watch?v=rtgVcSu7IY8` |
-| `musicEnabled` | boolean | `true` |
-| `musicVolume` | number | `55` |
-
-Allowed `mode` values:
-
-```text
-wall | slides | photo | live
-```
-
-Optional live-screen text fields:
-
-| Field | Type |
-| --- | --- |
-| `liveLabel` | string |
-| `liveTitle` | string |
-| `liveBody` | string |
-| `liveMeta` | string |
-| `liveSource` | string |
-| `liveSourceSermonId` | string |
-| `liveThumbnailUrl` | string |
-
-The awesome_church backend writes `liveTitle`, `liveBody`, `liveMeta`,
-`liveSource`, `liveSourceSermonId`, and `liveThumbnailUrl` automatically
-whenever it detects a new latest sermon — this bridge does not, it only
-reads this document. `liveUrl` is never auto-set (no YouTube link to derive
-it from anymore); the tech team can still manually edit any of these fields
-in Firebase for a special event or test stream.
-
-No index field is required. Slides and photos advance automatically.
-
-Whenever this document changes, the bridge's Firestore `onSnapshot` listener
-immediately updates the local display state:
-
-- `mode` updates `control.json`.
-- `liveUrl` updates the live player in `content.json`.
-- `backgroundMusicUrl`, `musicEnabled`, and `musicVolume` update the background
-  player in `content.json`.
-
-The SPA notices those files and applies them without reloading.
-
-## 4. Sermon Live Feed (owned by the backend, not this project)
-
-This bridge does **not** watch the `sermons` collection anymore. That job
-belongs to the main `awesome_church` backend (`backend/run.py`), which
-already watches `sermons` for push notifications and now also mirrors the
-newest sermon into `appContent/signage`. See `_sync_latest_sermon_to_signage`
-in that repo for the exact logic (most recent 20 docs by `scheduledStart`,
-skipping `isPublished === false` or `isSermon === false`, first match wins).
-
-This bridge only ever reads whatever ends up on `appContent/signage` — so
-manual changes to `mode`, `backgroundMusicUrl`, or live fields in Firebase
-console still apply immediately through the same `onSnapshot` path, same as
-sermon-driven updates.
-
-Fields the backend keeps in sync from the latest sermon:
-
-| Field | Source |
-| --- | --- |
-| `liveTitle` | `title` or `fullTitle` |
-| `liveBody` | `description` |
-| `liveMeta` | `speaker` + `displayDate` |
-| `liveThumbnailUrl` | `thumbnailUrl` |
-| `liveSourceSermonId` | the sermon doc's ID |
-
-`liveUrl` is never touched by this sync — the church now runs local RTMP
-push instead of YouTube, so there's no meaningful URL to derive. Set it by
-hand in Firebase console only if you need a link for a special event.
-
-## 5. Install
-
-Open PowerShell in this project and run:
-
-```powershell
-npm install
-```
-
-This installs the Google Drive and Firebase Admin libraries. It only needs to be
-repeated when `package.json` changes.
-
-## 6. Test the Integration
-
-To initialize `appContent/signage` (mode, `backgroundMusicUrl`, or any live
-field), edit the document directly in the Firebase console — this project no
-longer writes to Firestore, so there's no local seed script anymore. The
-backend keeps the sermon-derived live fields in sync on its own once a
-published sermon exists.
-
-First, start the integration bridge:
-
-```powershell
-npm run bridge
-```
-
-A successful start reports:
+`start_signage.sh` writes PIDs to `run/` and logs to `logs/`
+(`bridge.log`, `server.log`). A healthy bridge logs:
 
 ```text
 Drive sync complete: 100 photos, 10 slides
@@ -251,106 +137,63 @@ Firestore snapshot applied: mode=wall, live=set, music=set
 Watching Firestore appContent/signage; syncing Drive every 300 seconds.
 ```
 
-It creates these local generated files:
+Point the TV's browser at `http://<vm-lan-address>:8000/`.
 
-```text
-media/photos/
-media/slides/
-content.json
-control.json
-.signage-sync-state.json
+**Deploying a change**: push to this repo, then on the VM:
+
+```bash
+cd ~/photowall && git pull --ff-only && ./start_signage.sh
 ```
 
-Keep that PowerShell window running.
+`check_signage.sh` does **not** restart a bridge that is already running, so
+after a code change use `start_signage.sh` explicitly, or the old process
+keeps serving old code.
 
-In a second PowerShell window, start the display server:
+`deploy_to_vm.ps1` is an alternative that copies the working tree over SSH
+from a Windows machine. It takes the target from `-Target user@host` or the
+`SIGNAGE_VM_TARGET` environment variable.
 
-```powershell
-npm start
+**Sunday automation**: an n8n workflow runs `check_signage.sh` over SSH every
+Sunday morning along with the livestream prep, and reports to the tech
+team's Telegram group if the display had to be restarted or could not start.
+
+## 5. Local override
+
+For emergencies on the VM, the mode can be forced locally; the next
+Firestore change becomes authoritative again:
+
+```bash
+python3 display_control.py wall|slides|photo|live
+python3 display_control.py --status
 ```
 
-Open this on the phone/TV:
+## 6. Hidden display controls
 
-```text
-http://10.50.0.3:8000/
-```
+- Top-left invisible touch zone: toggle background music mute.
+- Top-right invisible touch zone: enter or exit fullscreen.
 
-Test the complete flow:
+Android and TV browsers require a real user tap before allowing unmuted
+audio or fullscreen; nothing remote can fake that.
 
-1. Change Firestore `mode` to `wall`, `slides`, `photo`, and `live`.
-2. In the `awesome_church` backend repo, add or update a newer published
-   sermon and confirm `appContent/signage`'s `liveTitle`/`liveBody`/`liveMeta`/
-   `liveThumbnailUrl` update (this bridge just reflects whatever lands there —
-   it isn't the thing computing it).
-3. Change `backgroundMusicUrl` and confirm the background player changes.
-4. Add an image to each Drive folder.
-5. Restart `npm run bridge` or wait for the next Drive sync.
-6. Confirm the new files appear without refreshing the phone.
+## Media controller (`vm/`)
 
-## Local Backup Control
-
-The local Python helper can still override the current view temporarily:
-
-```powershell
-python display_control.py wall
-python display_control.py slides
-python display_control.py photo
-python display_control.py live
-python display_control.py --status
-```
-
-The next Firestore snapshot becomes authoritative again.
-
-## Hidden Display Controls
-
-- Top-left invisible touch zone toggles background music mute/unmute.
-- Top-right invisible touch zone enters or exits fullscreen.
-
-Android browsers require a real user tap before permitting unmuted audio or
-fullscreen. Firestore and JavaScript cannot fake that trusted tap.
-
-## VM Operation
-
-For normal use, keep these two processes running on the church VM:
-
-```powershell
-npm run bridge
-npm start
-```
-
-They can later be added to Windows Task Scheduler so they start automatically
-when the VM starts. Keep the display on the church LAN and use the existing VPN
-for offsite Firestore or Drive administration.
+`vm/media` is the bash controller installed to `/usr/local/bin/media` on the
+VM. It powers the PoE camera, wakes and sleeps the Windows media PC, manages
+NDI, wakes the Mac Mini, opens and controls OBS over obs-websocket, recalls
+camera presets over VISCA, and chains all of that into `media stream prep`,
+`start`, `stop`, `status`. The Telegram assistant and the Sunday automation
+call it over SSH. Setup, env file, and output conventions:
+[vm/README.md](vm/README.md).
 
 ## Troubleshooting
 
-### Configuration is incomplete
-
-Confirm that `serviceAccountKey.json` exists and both Drive folder IDs have been
-entered in `signage.config.json`.
-
-### Firestore permission denied
-
-Confirm the key belongs to the Firebase project and the service account has a
-Firestore **read** role (e.g. Cloud Datastore Viewer). It doesn't need write
-access — this project never writes to Firestore.
-
-### Drive returns 404 or no images
-
-Share each exact folder with the service account's `client_email`. Confirm the
-files use one of the supported image formats.
-
-### Slides appear in the wrong order
-
-Use padded numeric prefixes such as `001`, `002`, and `003`.
-
-### Firestore changes do not reach the TV
-
-Confirm `npm run bridge` is still running and reports
-`Firestore snapshot applied`. Then confirm `npm start` is running and the TV is
-still on the VM's LAN address.
-
-### The TV displays sample content
-
-The SPA uses built-in samples when no usable `content.json` exists. Check the
-bridge output and confirm it reports at least one downloaded photo or slide.
+| Symptom | Check |
+|---|---|
+| "Configuration is incomplete" | `serviceAccountKey.json` present, all three folder IDs in `signage.config.json` |
+| Firestore permission denied | Key belongs to the Firebase project and has a Firestore **read** role |
+| Drive 404 or no images | Each folder shared with the service account's `client_email`; supported formats only |
+| Slides out of order | Use zero-padded numeric prefixes |
+| Firestore changes don't reach the TV | `./check_signage.sh`; `logs/bridge.log` should show `Firestore snapshot applied` |
+| TV shows sample content | No usable `content.json` yet; the bridge must report at least one photo or slide |
+| Live mode is blank | `liveUrl` must point at a reachable HLS or YouTube URL; confirm OBS is streaming to MediaMTX |
+| Cards look too big or small | Tune `wallScreenInches` / `wallCardScale` in Firestore |

@@ -1,7 +1,9 @@
 # Church VM media tooling
 
-Version-controlled copy of what runs on the church VM (`192.168.2.18`) to
-control the AV setup. Install/update with `sudo vm/install.sh` after `git pull`.
+Version-controlled copy of what runs on the church management VM to control
+the AV setup. Install/update with `sudo bash vm/install.sh` after `git pull`.
+Real hostnames and addresses live only in `/etc/awesomechurch-media.env` on
+the VM; the values below are placeholders.
 
 ```
 media up|sleep|down|status         camera + media PC + NDI (unchanged)
@@ -50,7 +52,7 @@ MAC_MINI_MAC=aa:bb:cc:dd:ee:ff          # optional, for Wake-on-LAN
 OBS_WS_HOST=192.168.2.30                # defaults to MAC_MINI_IP
 OBS_WS_PORT=4455
 OBS_WS_PASSWORD=change-me
-OBS_REQUIRED_INPUTS=Media PC,Camera,X32 # exact OBS source names that must exist
+OBS_REQUIRED_INPUTS="NDI® Source, Capture Card Device"   # exact OBS source names; quote values with spaces (file is sourced by bash)
 OBS_APP_NAME=OBS
 CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; blank to skip
 CAMERA_VISCA_PORT=52381
