@@ -949,12 +949,16 @@ system_up() {
     camera_status_file="$(mktemp)"
     pc_status_file="$(mktemp)"
 
+    # A RETURN trap outlives the function that set it, so clear it here or it
+    # fires again on later function returns where these locals no longer
+    # exist (set -u then aborts with "camera_log: unbound variable").
     cleanup_system_up() {
+        trap - RETURN
         rm -f \
-            "$camera_log" \
-            "$pc_log" \
-            "$camera_status_file" \
-            "$pc_status_file"
+            "${camera_log:-}" \
+            "${pc_log:-}" \
+            "${camera_status_file:-}" \
+            "${pc_status_file:-}"
     }
 
     trap cleanup_system_up RETURN
@@ -1046,11 +1050,12 @@ system_sleep() {
     camera_status_file="$(mktemp)"
 
     cleanup_system_sleep() {
+        trap - RETURN
         rm -f \
-            "$pc_log" \
-            "$camera_log" \
-            "$pc_status_file" \
-            "$camera_status_file"
+            "${pc_log:-}" \
+            "${camera_log:-}" \
+            "${pc_status_file:-}" \
+            "${camera_status_file:-}"
     }
 
     trap cleanup_system_sleep RETURN
@@ -1121,11 +1126,12 @@ system_down() {
     camera_status_file="$(mktemp)"
 
     cleanup_system_down() {
+        trap - RETURN
         rm -f \
-            "$pc_log" \
-            "$camera_log" \
-            "$pc_status_file" \
-            "$camera_status_file"
+            "${pc_log:-}" \
+            "${camera_log:-}" \
+            "${pc_status_file:-}" \
+            "${camera_status_file:-}"
     }
 
     trap cleanup_system_down RETURN
