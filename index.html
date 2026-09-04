@@ -65,11 +65,11 @@
       left: clamp(24px, 4vw, 72px);
       bottom: clamp(24px, 5vh, 72px);
       z-index: 80;
-      max-width: min(34rem, 72vw);
-      padding: 16px 20px 17px;
+      max-width: min(46rem, 72vw);
+      padding: clamp(18px, 1.6vw, 30px) clamp(22px, 2vw, 40px) clamp(19px, 1.7vw, 32px);
       color: #fffdf8;
       background: rgba(35, 31, 27, .78);
-      border-left: 4px solid #efc86f;
+      border-left: 6px solid #efc86f;
       box-shadow: 0 16px 34px rgba(42,35,28,.2);
       backdrop-filter: blur(14px);
     }
@@ -80,9 +80,9 @@
     }
 
     .wall-copy p {
-      margin-bottom: 5px;
+      margin-bottom: 8px;
       color: rgba(255,253,248,.68);
-      font-size: clamp(.68rem, .85vw, .82rem);
+      font-size: clamp(.85rem, 1.15vw, 1.35rem);
       font-weight: 800;
       letter-spacing: .14em;
       text-transform: uppercase;
@@ -90,7 +90,7 @@
 
     .wall-copy h1 {
       font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(1.55rem, 2.6vw, 2.7rem);
+      font-size: clamp(2.2rem, 3.8vw, 4.6rem);
       font-weight: 500;
       line-height: 1.04;
       letter-spacing: 0;
@@ -162,6 +162,17 @@
       aspect-ratio: 99 / 62;
       overflow: hidden;
       background: #ddd;
+    }
+
+    /* Portrait photos: narrower card with a 3:4 frame whose height matches the
+       landscape frames (62/99 * 3/4 = .4697 of the photo width), so rows stay
+       aligned and nothing gets cropped into a landscape strip. */
+    .polaroid.portrait {
+      width: calc((var(--card-w) - 20px) * .4697 + 20px);
+    }
+
+    .polaroid.portrait .photo-frame {
+      aspect-ratio: 3 / 4;
     }
 
     .photo-frame::after {
@@ -899,8 +910,8 @@
     const DRIFT_X = 5;
     const DRIFT_Y = 4;
     const HEADER_SAFE_GAP = 34;
-    const MIN_CARD_WIDTH_DESKTOP = 340;
-    const MIN_CARD_WIDTH_MOBILE = 190;
+    const MIN_CARD_WIDTH_DESKTOP = 250;
+    const MIN_CARD_WIDTH_MOBILE = 170;
 
     function clamp(value, min, max) {
       return Math.min(max, Math.max(min, value));
@@ -1051,15 +1062,15 @@
       const usableH = vh - padY * 2;
       const smallRealPool = realPhotoCount > 0 && realPhotoCount <= 18;
       const responsiveMinWidth = smallRealPool
-        ? clamp(Math.sqrt(area) / 5.7, vw < 620 ? 150 : 190, 310)
-        : clamp(Math.sqrt(area) / 6.5, vw < 620 ? 124 : 166, 255);
+        ? clamp(Math.sqrt(area) / 6.8, vw < 620 ? 140 : 180, 290)
+        : clamp(Math.sqrt(area) / 7.8, vw < 620 ? 118 : 156, 240);
       const minWidth = Math.max(
         vw < 620 ? MIN_CARD_WIDTH_MOBILE : MIN_CARD_WIDTH_DESKTOP,
         responsiveMinWidth
       );
       const maxWidth = smallRealPool
-        ? Math.max(minWidth, clamp(Math.sqrt(area) / 3.7, 240, 430))
-        : Math.max(minWidth, clamp(Math.sqrt(area) / 4.35, 198, 350));
+        ? Math.max(minWidth, clamp(Math.sqrt(area) / 4.6, 220, 340))
+        : Math.max(minWidth, clamp(Math.sqrt(area) / 5.2, 190, 290));
       const reservedAreas = getReservedAreas(vw, vh);
       let best = null;
 
@@ -1583,8 +1594,15 @@
       await waitForImages(el);
     }
 
+    function markCardOrientation(el) {
+      const image = el.querySelector(".photo-frame img");
+      const portrait = Boolean(image && image.naturalWidth && image.naturalHeight > image.naturalWidth);
+      el.classList.toggle("portrait", portrait);
+    }
+
     function revealCardWhenReady(el, delay = 0) {
       waitForCardImage(el).then(() => {
+        markCardOrientation(el);
         setTimeout(() => {
           if (!elements.includes(el)) return;
           el.classList.remove("leaving");
