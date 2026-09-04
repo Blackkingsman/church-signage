@@ -232,14 +232,25 @@ function normalizeRemoteState(config, data = {}) {
     liveLabel: data.liveLabel,
     liveTitle: data.liveTitle,
     liveBody: data.liveBody,
-    liveMeta: data.liveMeta
+    liveMeta: data.liveMeta,
+    // Optional true-size wall settings, editable in Firestore without touching
+    // the VM: TV diagonal in inches and a multiplier on real Instax Wide size.
+    wallScreenInches: Number.isFinite(data.wallScreenInches) && data.wallScreenInches > 0
+      ? data.wallScreenInches
+      : null,
+    wallCardScale: Number.isFinite(data.wallCardScale) && data.wallCardScale > 0
+      ? data.wallCardScale
+      : null
   };
 }
 
 function buildManifest(config, photos, photoSlides, slides, remote) {
   const live = config.live || {};
+  const wall = { ...(config.wall || {}) };
+  if (remote.wallScreenInches) wall.screenInches = remote.wallScreenInches;
+  if (remote.wallCardScale) wall.cardScale = remote.wallCardScale;
   return {
-    wall: config.wall || {},
+    wall,
     photos,
     photoSlides,
     slides,
