@@ -1332,7 +1332,10 @@
         image,
         driveId,
         key: driveId || image || item.caption || `photo-${index}`,
-        art: item.art || basePhotoLibrary[index % basePhotoLibrary.length].art
+        art: item.art || basePhotoLibrary[index % basePhotoLibrary.length].art,
+        orientation: item.orientation === "portrait" || item.orientation === "landscape"
+          ? item.orientation
+          : ""
       };
     }
 
@@ -1548,6 +1551,7 @@
 
     function setCardPhoto(el, photo, id) {
       el.dataset.photoKey = photoKey(photo);
+      el.dataset.orientation = photo.orientation || "";
       el.setAttribute("aria-label", photo.caption);
       el.innerHTML = `
         <div class="tape"></div>
@@ -1635,6 +1639,15 @@
     }
 
     async function markCardOrientation(el) {
+      // Preferred: the orientation the bridge computed from Drive metadata at
+      // sync time (content.json). The in-browser probe is only a fallback for
+      // photos that have no metadata.
+      const known = el.dataset.orientation || "";
+      if (known === "portrait" || known === "landscape") {
+        el.classList.toggle("portrait", known === "portrait");
+        return;
+      }
+
       const image = el.querySelector(".photo-frame img");
       const src = image ? (image.currentSrc || image.src) : "";
       if (!src) {

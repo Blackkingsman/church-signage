@@ -107,7 +107,7 @@ async function listDriveFiles(drive, folderId) {
   do {
     const response = await drive.files.list({
       q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id,name,mimeType,modifiedTime,md5Checksum,size)",
+      fields: "nextPageToken, files(id,name,mimeType,modifiedTime,md5Checksum,size,imageMediaMetadata(width,height,rotation))",
       orderBy: "name_natural",
       pageSize: 1000,
       pageToken,
@@ -121,6 +121,21 @@ async function listDriveFiles(drive, folderId) {
   } while (pageToken);
 
   return files;
+}
+
+// Landscape vs portrait from Drive's own image metadata. Drive reports the
+// stored pixel size plus `rotation` (number of clockwise 90° turns needed to
+// display upright, from EXIF), so a phone photo stored sideways is handled
+// here once instead of every card measuring itself in the browser.
+function orientationFromMetadata(file) {
+  const meta = file.imageMediaMetadata || {};
+  let width = Number(meta.width) || 0;
+  let height = Number(meta.height) || 0;
+  if (!width || !height) return undefined;
+  if ((Number(meta.rotation) || 0) % 2 === 1) {
+    [width, height] = [height, width];
+  }
+  return height > width ? "portrait" : "landscape";
 }
 
 async function downloadDriveFile(drive, file, destination) {
@@ -182,11 +197,13 @@ async function syncFolder(drive, folderId, category, previousState) {
     const relativePath = path.relative(root, destination).replaceAll("\\", "/");
     keepFiles.add(path.resolve(destination).toLowerCase());
     currentState[file.id] = { signature, path: relativePath };
+    const orientation = orientationFromMetadata(file);
     manifestItems.push({
       caption: path.parse(file.name).name,
       image: encodeURI(relativePath),
       driveId: file.id,
-      artIndex: position
+      artIndex: position,
+      ...(orientation ? { orientation } : {})
     });
   }
 
