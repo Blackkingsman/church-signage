@@ -12,7 +12,9 @@
   },
   "wall": {
     "eyebrow": "Community moments",
-    "title": "Our week together"
+    "title": "Our week together",
+    "screenInches": 65,
+    "cardScale": 1.5
   },
   "live": {
     "label": "Live now",

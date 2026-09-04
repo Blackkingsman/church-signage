@@ -1050,6 +1050,26 @@
       };
     }
 
+    // True-to-life card size. The browser only knows pixels, so the TV's
+    // diagonal (inches) has to be supplied: content.json wall.screenInches
+    // (from signage.config.json) or ?inches=65 in the URL for trying values.
+    // Cards are drawn as an Instax Wide frame (108 mm) times wall.cardScale
+    // (or ?scale=1.5). Returns null when no diagonal is configured, in which
+    // case the proportional layout below is used.
+    const INSTAX_WIDE_FRAME_MM = 108;
+
+    function realCardWidthPx() {
+      const params = new URLSearchParams(window.location.search);
+      const inches = Number(params.get("inches")) || Number(wallContent.screenInches) || 0;
+      if (!inches || !Number.isFinite(inches)) return null;
+
+      const scale = Number(params.get("scale")) || Number(wallContent.cardScale) || 1;
+      // screen.width/height are CSS pixels, so this stays correct under
+      // display scaling (e.g. a 4K panel presented as 1920x1080 @2x).
+      const cssPpi = Math.hypot(window.screen.width, window.screen.height) / inches;
+      return (INSTAX_WIDE_FRAME_MM / 25.4) * cssPpi * scale;
+    }
+
     function solveLayout() {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -1069,14 +1089,20 @@
       const responsiveMinWidth = smallRealPool
         ? usableW * 0.115
         : usableW * 0.095;
-      const minWidth = Math.max(
+      let minWidth = Math.max(
         vw < 620 ? MIN_CARD_WIDTH_MOBILE : MIN_CARD_WIDTH_DESKTOP,
         responsiveMinWidth
       );
-      const maxWidth = Math.max(
+      let maxWidth = Math.max(
         minWidth,
         smallRealPool ? usableW * 0.15 : usableW * 0.125
       );
+
+      // When the screen's physical size is known, pin cards to real-life size.
+      const realCardWidth = realCardWidthPx();
+      if (realCardWidth) {
+        minWidth = maxWidth = clamp(realCardWidth, 120, usableW / 2);
+      }
       const reservedAreas = getReservedAreas(vw, vh);
       let best = null;
 
@@ -1398,7 +1424,9 @@
         if (content.wall && typeof content.wall === "object") {
           wallContent = {
             eyebrow: content.wall.eyebrow || wallContent.eyebrow,
-            title: content.wall.title || wallContent.title
+            title: content.wall.title || wallContent.title,
+            screenInches: Number(content.wall.screenInches) || 0,
+            cardScale: Number(content.wall.cardScale) || 1
           };
           document.getElementById("wallEyebrow").textContent = wallContent.eyebrow;
           document.getElementById("wallTitle").textContent = wallContent.title;
