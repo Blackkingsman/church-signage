@@ -1076,7 +1076,13 @@
       const area = vw * vh;
       const realPhotoCount = photoLibrary.filter(photo => photoSource(photo)).length;
       const visiblePhotoCount = realPhotoCount || photoLibrary.length;
-      const target = targetCardCount(vw, vh, visiblePhotoCount);
+      const realCardWidth = realCardWidthPx();
+      // In true-size mode the area heuristic (tuned for the proportional
+      // layout, and blind to display scaling) under-fills the wall; let the
+      // photo count drive it instead, capped so rotation still has spares.
+      const target = realCardWidth
+        ? Math.min(visiblePhotoCount, 60)
+        : targetCardCount(vw, vh, visiblePhotoCount);
       const padX = clamp(vw * 0.035, 18, 78);
       const padY = clamp(vh * 0.05, 24, 78);
       const gap = clamp(Math.min(vw, vh) * 0.018, 10, 28);
@@ -1102,7 +1108,6 @@
       // maxWidthForCell() binary-searches to just *under* maxWidth, so minWidth
       // must sit a little below the target or every grid is rejected and the
       // solver falls back to a sparse 3x3.
-      const realCardWidth = realCardWidthPx();
       if (realCardWidth) {
         maxWidth = clamp(realCardWidth, 120, usableW / 2);
         minWidth = maxWidth * 0.96;
