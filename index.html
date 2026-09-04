@@ -1099,9 +1099,13 @@
       );
 
       // When the screen's physical size is known, pin cards to real-life size.
+      // maxWidthForCell() binary-searches to just *under* maxWidth, so minWidth
+      // must sit a little below the target or every grid is rejected and the
+      // solver falls back to a sparse 3x3.
       const realCardWidth = realCardWidthPx();
       if (realCardWidth) {
-        minWidth = maxWidth = clamp(realCardWidth, 120, usableW / 2);
+        maxWidth = clamp(realCardWidth, 120, usableW / 2);
+        minWidth = maxWidth * 0.96;
       }
       const reservedAreas = getReservedAreas(vw, vh);
       let best = null;
