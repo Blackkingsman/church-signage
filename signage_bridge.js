@@ -235,6 +235,13 @@ function normalizeRemoteState(config, data = {}) {
     liveMeta: data.liveMeta,
     // Optional true-size wall settings, editable in Firestore without touching
     // the VM: TV diagonal in inches and a multiplier on real Instax Wide size.
+    // Wall heading, editable in Firestore (falls back to signage.config.json).
+    wallEyebrow: typeof data.wallEyebrow === "string" && data.wallEyebrow.trim()
+      ? data.wallEyebrow.trim()
+      : null,
+    wallTitle: typeof data.wallTitle === "string" && data.wallTitle.trim()
+      ? data.wallTitle.trim()
+      : null,
     wallScreenInches: Number.isFinite(data.wallScreenInches) && data.wallScreenInches > 0
       ? data.wallScreenInches
       : null,
@@ -247,6 +254,8 @@ function normalizeRemoteState(config, data = {}) {
 function buildManifest(config, photos, photoSlides, slides, remote) {
   const live = config.live || {};
   const wall = { ...(config.wall || {}) };
+  if (remote.wallEyebrow) wall.eyebrow = remote.wallEyebrow;
+  if (remote.wallTitle) wall.title = remote.wallTitle;
   if (remote.wallScreenInches) wall.screenInches = remote.wallScreenInches;
   if (remote.wallCardScale) wall.cardScale = remote.wallCardScale;
   return {

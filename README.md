@@ -107,6 +107,7 @@ Copy each folder's ID from its URL
 | `backgroundMusicUrl` | string | by hand | YouTube link for the wall's background music |
 | `musicEnabled` | boolean | by hand | |
 | `musicVolume` | number | by hand | 0–100 |
+| `wallEyebrow`, `wallTitle` | string | by hand | The photo wall heading (small line above, big line below). Override `wall.eyebrow` / `wall.title` from the config. |
 | `wallScreenInches` | number | by hand | TV diagonal; drives real-size polaroid cards. Overrides `wall.screenInches` in the config. |
 | `wallCardScale` | number | by hand | Multiplier on real Instax Wide size (1 = life size). Overrides `wall.cardScale`. |
 | `photoIntervalSeconds`, `slideIntervalSeconds` | number | by hand | Slideshow timing |
