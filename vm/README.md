@@ -56,7 +56,37 @@ OBS_REQUIRED_INPUTS="NDI® Source, Capture Card Device"   # exact OBS source nam
 OBS_APP_NAME=OBS
 CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; blank to skip
 CAMERA_VISCA_PORT=52381
+MAC_REBOOT_PREP=1                       # reboot the Mac Mini during "stream prep" (see below); 0 to skip
 ```
+
+### Sunday reboot of the Mac Mini (`MAC_REBOOT_PREP=1`)
+
+`media stream prep` then does: wake → quit OBS cleanly → `shutdown -r now` →
+wait for SSH to come back → 30 s for the desktop → open OBS. This gives the
+USB audio interface a fresh boot every week. It needs, once, on the Mac:
+
+1. Passwordless sudo for the reboot only (as the OBS user):
+   ```
+   echo "$USER ALL=(ALL) NOPASSWD: /sbin/shutdown" | sudo tee /etc/sudoers.d/media-reboot
+   sudo chmod 440 /etc/sudoers.d/media-reboot
+   ```
+2. **System Settings → Users & Groups → Automatic login** set to the OBS user,
+   so a GUI session exists after the reboot for `open -a OBS` to land in.
+   FileVault must be **off** for automatic login to work.
+3. Test from the VM: `media mac reboot`, then `media obs open`.
+
+OBS is quit with AppleScript (same as Cmd+Q) before the reboot so it saves
+state; a hard kill makes the next launch stop on the "start in safe mode?"
+dialog, and the WebSocket never comes up.
+
+### Encoder check
+
+`obs status` reports `OBS_ENCODER` and `OBS_SOFTWARE_ENCODER`. On the Mac
+Mini the stream encoder must be the **Apple VT hardware encoder**
+(Settings → Output → Streaming → Video Encoder), never x264; status returns
+partial (exit 2) when a software encoder is selected. For the second output
+to MediaMTX, set the Multiple RTMP Outputs target to reuse the main stream's
+encoders instead of encoding again, or the Mac encodes everything twice.
 
 Then: `sudo vm/install.sh` and `media stream status`.
 

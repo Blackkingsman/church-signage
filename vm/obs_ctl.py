@@ -95,21 +95,47 @@ def snapshot(obs: Obs, required: list[str]) -> dict:
     inputs = [i.get("inputName", "") for i in obs.request("GetInputList").get("inputs", [])]
     missing = [name for name in required if name not in inputs]
     version = obs.request("GetVersion")
+
+    # Which video encoder the stream output uses. A software encoder (x264)
+    # on the Mac Mini is what produces "encoding overloaded" mid-service.
+    mode, encoder = "", ""
+    try:
+        mode = obs.request("GetProfileParameter",
+                           {"parameterCategory": "Output", "parameterName": "Mode"}).get("parameterValue") or "Simple"
+        if mode == "Advanced":
+            encoder = obs.request("GetProfileParameter",
+                                  {"parameterCategory": "AdvOut", "parameterName": "Encoder"}).get("parameterValue") or ""
+        else:
+            encoder = obs.request("GetProfileParameter",
+                                  {"parameterCategory": "SimpleOutput", "parameterName": "StreamEncoder"}).get("parameterValue") or ""
+    except Exception:
+        pass
+    software_encoder = "x264" in encoder.lower() or encoder.lower() in ("obs_x264",)
+
     info = {
         "streaming": bool(stream.get("outputActive")),
         "stream_seconds": int(stream.get("outputDuration", 0) / 1000),
+        "skipped_frames": int(stream.get("outputSkippedFrames", 0) or 0),
+        "total_frames": int(stream.get("outputTotalFrames", 0) or 0),
         "scene": scene.get("currentProgramSceneName") or scene.get("sceneName") or "",
         "inputs": inputs,
         "missing_inputs": missing,
         "obs_version": version.get("obsVersion", ""),
+        "output_mode": mode,
+        "encoder": encoder,
+        "software_encoder": software_encoder,
     }
     print("OBS_STATE=running")
     print(f"OBS_VERSION={info['obs_version']}")
     print(f"OBS_STREAMING={'true' if info['streaming'] else 'false'}")
     print(f"OBS_STREAM_SECONDS={info['stream_seconds']}")
+    print(f"OBS_SKIPPED_FRAMES={info['skipped_frames']}")
     print(f"OBS_SCENE={info['scene']}")
     print(f"OBS_INPUTS={', '.join(inputs)}")
     print(f"OBS_MISSING_INPUTS={', '.join(missing)}")
+    print(f"OBS_OUTPUT_MODE={mode}")
+    print(f"OBS_ENCODER={encoder}")
+    print(f"OBS_SOFTWARE_ENCODER={'true' if software_encoder else 'false'}")
     return info
 
 
@@ -144,6 +170,9 @@ def main() -> int:
         if args.command == "status":
             if info["missing_inputs"]:
                 result(False, action, "OBS is running but these sources are missing: " + ", ".join(info["missing_inputs"]), partial=True)
+                return 2
+            if info["software_encoder"]:
+                result(False, action, f"OBS is using the software encoder ({info['encoder']}); switch Settings > Output to the Apple hardware encoder or it will overload", partial=True)
                 return 2
             state = "streaming" if info["streaming"] else "ready (not streaming)"
             result(True, action, f"OBS is {state}, scene '{info['scene']}'")

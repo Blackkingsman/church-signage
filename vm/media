@@ -38,6 +38,12 @@ MAC_SSH_HOST="${MAC_SSH_HOST:-}"
 MAC_SSH_PORT="${MAC_SSH_PORT:-22}"
 MAC_MINI_MAC="${MAC_MINI_MAC:-}"
 MAC_ONLINE_ATTEMPTS="${MAC_ONLINE_ATTEMPTS:-24}"
+# Reboot the Mac Mini during "stream prep" so OBS starts from a clean boot
+# (fixes the USB audio interface not being picked up after days of uptime).
+# Needs passwordless sudo for /sbin/shutdown and automatic login on the Mac.
+MAC_REBOOT_PREP="${MAC_REBOOT_PREP:-0}"
+MAC_REBOOT_ATTEMPTS="${MAC_REBOOT_ATTEMPTS:-36}"          # x WAIT_INTERVAL_SECONDS to come back
+MAC_REBOOT_SETTLE_SECONDS="${MAC_REBOOT_SETTLE_SECONDS:-30}"  # desktop/login time before launching OBS
 
 OBS_WS_HOST="${OBS_WS_HOST:-$MAC_MINI_IP}"
 OBS_WS_PORT="${OBS_WS_PORT:-4455}"
@@ -704,6 +710,52 @@ mac_wake() {
     return 1
 }
 
+mac_reboot() {
+    require_mac_config mac-reboot || return 1
+
+    local attempt
+
+    if ! tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+        result false mac-reboot "Mac Mini SSH is unavailable; wake it first"
+        return 1
+    fi
+
+    # Quit OBS cleanly first. If the reboot kills it, the next launch shows the
+    # "OBS didn't shut down properly, start in safe mode?" dialog and the
+    # WebSocket never comes up.
+    if tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        obs_quit || log "OBS did not quit cleanly; rebooting anyway"
+    fi
+
+    log "Rebooting the Mac Mini"
+    # The SSH session drops as the Mac goes down, so a non-zero exit is expected.
+    mac_ssh "sudo -n /sbin/shutdown -r now" >/dev/null 2>&1 || true
+
+    for ((attempt=1; attempt<=12; attempt++)); do
+        if ! tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+            break
+        fi
+        log "Waiting for the Mac Mini to go down: ${attempt}/12"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+        result false mac-reboot "Mac Mini never went down (is passwordless sudo for /sbin/shutdown set up?)"
+        return 1
+    fi
+
+    if ! wait_for_mac_online "$MAC_REBOOT_ATTEMPTS"; then
+        result false mac-reboot "Mac Mini did not come back after the reboot"
+        return 1
+    fi
+
+    log "Giving the Mac Mini ${MAC_REBOOT_SETTLE_SECONDS}s to finish logging in"
+    sleep "$MAC_REBOOT_SETTLE_SECONDS"
+
+    result true mac-reboot "Mac Mini rebooted and is back"
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # OBS on the Mac Mini (obs-websocket via obs_ctl.py)
 # ---------------------------------------------------------------------------
@@ -782,6 +834,39 @@ obs_start() {
     obs_ctl start
 }
 
+obs_quit() {
+    require_mac_config obs-quit || return 1
+
+    local attempt
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        result true obs-quit "OBS is not running"
+        return 0
+    fi
+
+    if ! tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+        result false obs-quit "Mac Mini SSH is unavailable"
+        return 1
+    fi
+
+    log "Quitting ${OBS_APP_NAME} on the Mac Mini"
+    # AppleScript quit = the same as Cmd+Q, so OBS saves its state and the next
+    # launch does not offer safe mode.
+    mac_ssh "osascript -e 'tell application \"${OBS_APP_NAME}\" to quit'" >/dev/null 2>&1 || true
+
+    for ((attempt=1; attempt<=12; attempt++)); do
+        if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+            result true obs-quit "OBS quit cleanly"
+            return 0
+        fi
+        log "Waiting for OBS to quit: ${attempt}/12"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
+
+    result false obs-quit "OBS is still running after the quit request"
+    return 1
+}
+
 obs_stop() {
     require_mac_config obs-stop || return 1
 
@@ -824,6 +909,18 @@ stream_prep() {
     echo "=== MAC MINI ==="
     mac_wake || mac_rc=$?
 
+    local reboot_rc=0
+    if [[ "$MAC_REBOOT_PREP" == "1" ]]; then
+        echo
+        echo "=== MAC REBOOT ==="
+        if [[ "$mac_rc" -eq 0 ]]; then
+            mac_reboot || reboot_rc=$?
+        else
+            reboot_rc=1
+            log "Skipping the Mac Mini reboot because it is not reachable"
+        fi
+    fi
+
     echo
     echo "=== OBS ==="
     if [[ "$mac_rc" -eq 0 ]]; then
@@ -840,9 +937,10 @@ stream_prep() {
     echo "UP_RESULT=${up_rc}"
     echo "PRESET_RESULT=${preset_rc}"
     echo "MAC_RESULT=${mac_rc}"
+    [[ "$MAC_REBOOT_PREP" == "1" ]] && echo "REBOOT_RESULT=${reboot_rc}"
     echo "OBS_RESULT=${obs_rc}"
 
-    if [[ "$up_rc" -eq 0 && "$preset_rc" -eq 0 && "$mac_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
+    if [[ "$up_rc" -eq 0 && "$preset_rc" -eq 0 && "$mac_rc" -eq 0 && "$reboot_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
         result true stream-prep "Stream is prepped: media system up, camera framed, OBS ready"
         return 0
     fi
@@ -851,6 +949,7 @@ stream_prep() {
         local notes=()
         [[ "$up_rc" -eq 2 ]] && notes+=("NDI needs attention")
         [[ "$preset_rc" -ne 0 ]] && notes+=("camera preset failed")
+        [[ "$reboot_rc" -ne 0 ]] && notes+=("Mac Mini reboot failed, OBS started on the old boot")
         [[ "$obs_rc" -eq 2 ]] && notes+=("OBS is missing sources")
         partial_result stream-prep "Stream is mostly prepped: $(IFS='; '; echo "${notes[*]}")"
         return 2
@@ -1283,9 +1382,11 @@ Commands:
 
   mac status              Show Mac Mini status
   mac wake                Wake the Mac Mini (Wake-on-LAN, needs MAC_MINI_MAC)
+  mac reboot              Quit OBS cleanly, reboot the Mac Mini, wait for it to return
   mac ssh                 Open an SSH session to the Mac Mini
 
   obs open                Launch OBS on the Mac Mini
+  obs quit                Quit OBS cleanly (Cmd+Q equivalent)
   obs start               Start streaming in OBS
   obs stop                Stop streaming in OBS
   obs status              OBS state, scene, sources, streaming flag
@@ -1417,8 +1518,11 @@ case "$main_command" in
             ssh)
                 mac_ssh_interactive
                 ;;
+            reboot|restart)
+                mac_reboot
+                ;;
             *)
-                echo "Usage: media mac {status|wake|ssh}" >&2
+                echo "Usage: media mac {status|wake|reboot|ssh}" >&2
                 exit 1
                 ;;
         esac
@@ -1428,6 +1532,9 @@ case "$main_command" in
         case "$sub_command" in
             open|launch)
                 obs_open
+                ;;
+            quit|close)
+                obs_quit
                 ;;
             start)
                 obs_start
@@ -1439,7 +1546,7 @@ case "$main_command" in
                 obs_status
                 ;;
             *)
-                echo "Usage: media obs {open|start|stop|status}" >&2
+                echo "Usage: media obs {open|quit|start|stop|status}" >&2
                 exit 1
                 ;;
         esac
