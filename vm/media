@@ -40,10 +40,12 @@ MAC_MINI_MAC="${MAC_MINI_MAC:-}"
 MAC_ONLINE_ATTEMPTS="${MAC_ONLINE_ATTEMPTS:-24}"
 MAC_LOGIN_TIMEOUT="${MAC_LOGIN_TIMEOUT:-20}"                  # seconds for a probe SSH login
 MAC_DESKTOP_ATTEMPTS="${MAC_DESKTOP_ATTEMPTS:-12}"            # x WAIT_INTERVAL_SECONDS for a desktop session
-# Reboot the Mac Mini during "stream prep" so OBS starts from a clean boot
-# (fixes the USB audio interface not being picked up after days of uptime).
-# Needs passwordless sudo for /sbin/shutdown and automatic login on the Mac.
-MAC_REBOOT_PREP="${MAC_REBOOT_PREP:-0}"
+# "stream prep --reboot-mac" reboots the Mac Mini so OBS starts from a clean
+# boot (fixes the USB audio interface not being picked up after days of
+# uptime). Only the Sunday 08:45 automation passes the flag; the Telegram
+# bot and manual "stream prep" never reboot. Needs passwordless sudo for
+# /sbin/shutdown and automatic login on the Mac.
+REBOOT_MAC=0
 MAC_REBOOT_ATTEMPTS="${MAC_REBOOT_ATTEMPTS:-36}"          # x WAIT_INTERVAL_SECONDS to come back
 MAC_REBOOT_SETTLE_SECONDS="${MAC_REBOOT_SETTLE_SECONDS:-30}"  # desktop/login time before launching OBS
 
@@ -989,7 +991,7 @@ stream_prep() {
 
     local reboot_rc=0
     local scene_rc=0
-    if [[ "$MAC_REBOOT_PREP" == "1" ]]; then
+    if [[ "$REBOOT_MAC" == "1" ]]; then
         echo
         echo "=== MAC REBOOT ==="
         if [[ "$mac_rc" -eq 0 ]]; then
@@ -1022,7 +1024,7 @@ stream_prep() {
     echo "UP_RESULT=${up_rc}"
     echo "PRESET_RESULT=${preset_rc}"
     echo "MAC_RESULT=${mac_rc}"
-    [[ "$MAC_REBOOT_PREP" == "1" ]] && echo "REBOOT_RESULT=${reboot_rc}"
+    [[ "$REBOOT_MAC" == "1" ]] && echo "REBOOT_RESULT=${reboot_rc}"
     [[ -n "$OBS_PREP_SCENE" ]] && echo "SCENE_RESULT=${scene_rc}"
     echo "OBS_RESULT=${obs_rc}"
 
@@ -1448,6 +1450,7 @@ Commands:
   ssh                     Open an SSH session to the media PC
 
   stream prep             up + camera preset + wake Mac Mini + open OBS + check sources
+  stream prep --reboot-mac  same, but reboot the Mac Mini first (Sunday 08:45 automation only)
   stream start            Start streaming in OBS (runs prep first if needed)
   stream stop             Stop streaming in OBS
   stream status           Readiness of camera, PC, Mac Mini and OBS
@@ -1514,6 +1517,14 @@ case "$main_command" in
     stream)
         case "$sub_command" in
             prep|prepare|ready)
+                case "$third_arg" in
+                    --reboot-mac) REBOOT_MAC=1 ;;
+                    "") ;;
+                    *)
+                        echo "Usage: media stream prep [--reboot-mac]" >&2
+                        exit 1
+                        ;;
+                esac
                 stream_prep
                 ;;
             start|go|live)

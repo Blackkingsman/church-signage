@@ -56,13 +56,14 @@ OBS_REQUIRED_INPUTS="NDI® Source, Capture Card Device"   # exact OBS source nam
 OBS_APP_NAME=OBS
 CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; blank to skip
 CAMERA_VISCA_PORT=52381
-MAC_REBOOT_PREP=1                       # reboot the Mac Mini during "stream prep" (see below); 0 to skip
 OBS_PREP_SCENE="Full Screen Computer"   # scene selected during "stream prep"; quote names with spaces
 ```
 
-### Sunday reboot of the Mac Mini (`MAC_REBOOT_PREP=1`)
+### Sunday reboot of the Mac Mini (`media stream prep --reboot-mac`)
 
-`media stream prep` then does: wake → quit OBS cleanly → `shutdown -r now` →
+Only the Sunday 08:45 n8n automation passes `--reboot-mac`; the Telegram bot's
+"start stream" and a manual `media stream prep` never reboot the Mac. With the
+flag, prep does: wake → quit OBS cleanly → `shutdown -r now` →
 wait for SSH to come back → 30 s for the desktop → open OBS. This gives the
 USB audio interface a fresh boot every week. It needs, once, on the Mac:
 
