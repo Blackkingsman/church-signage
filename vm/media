@@ -39,6 +39,7 @@ MAC_SSH_PORT="${MAC_SSH_PORT:-22}"
 MAC_MINI_MAC="${MAC_MINI_MAC:-}"
 MAC_ONLINE_ATTEMPTS="${MAC_ONLINE_ATTEMPTS:-24}"
 MAC_LOGIN_TIMEOUT="${MAC_LOGIN_TIMEOUT:-20}"                  # seconds for a probe SSH login
+MAC_DESKTOP_ATTEMPTS="${MAC_DESKTOP_ATTEMPTS:-12}"            # x WAIT_INTERVAL_SECONDS for a desktop session
 # Reboot the Mac Mini during "stream prep" so OBS starts from a clean boot
 # (fixes the USB audio interface not being picked up after days of uptime).
 # Needs passwordless sudo for /sbin/shutdown and automatic login on the Mac.
@@ -830,10 +831,27 @@ obs_open() {
         return 1
     fi
 
-    log "Launching ${OBS_APP_NAME} on the Mac Mini"
+    # "open -a" needs a desktop session to land in. Right after a reboot the
+    # only way one exists unattended is automatic login, and the desktop can
+    # take a little while to appear after SSH comes up.
+    local console_user=""
+    for ((attempt=1; attempt<=MAC_DESKTOP_ATTEMPTS; attempt++)); do
+        console_user="$(mac_ssh "who | awk '\$2 == \"console\" { print \$1; exit }'" 2>/dev/null || true)"
+        [[ -n "$console_user" ]] && break
+        log "Waiting for a desktop session on the Mac Mini: ${attempt}/${MAC_DESKTOP_ATTEMPTS}"
+        sleep "$WAIT_INTERVAL_SECONDS"
+    done
 
-    if ! mac_ssh "open -a '${OBS_APP_NAME}'" >/dev/null 2>&1; then
-        result false obs-open "Could not launch OBS over SSH (check Remote Login and the SSH key)"
+    if [[ -z "$console_user" ]]; then
+        result false obs-open "Nobody is logged in at the Mac Mini's screen, so OBS cannot be launched (turn on automatic login for the OBS user)"
+        return 1
+    fi
+
+    log "Launching ${OBS_APP_NAME} on the Mac Mini (desktop session: ${console_user})"
+
+    local open_output
+    if ! open_output="$(mac_ssh "open -a '${OBS_APP_NAME}'" 2>&1)"; then
+        result false obs-open "Could not launch OBS over SSH: ${open_output:-no output} (check Remote Login and the SSH key)"
         return 1
     fi
 
