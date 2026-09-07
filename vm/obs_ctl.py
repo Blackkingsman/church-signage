@@ -13,6 +13,7 @@ Usage:
   obs_ctl.py status
   obs_ctl.py start
   obs_ctl.py stop
+  obs_ctl.py scene --name "Full Screen Computer"
 """
 
 from __future__ import annotations
@@ -141,7 +142,8 @@ def snapshot(obs: Obs, required: list[str]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["status", "start", "stop"])
+    parser.add_argument("command", choices=["status", "start", "stop", "scene"])
+    parser.add_argument("--name", default=os.environ.get("OBS_PREP_SCENE", ""), help="scene name for the scene command")
     parser.add_argument("--host", default=os.environ.get("OBS_WS_HOST", ""))
     parser.add_argument("--port", type=int, default=int(os.environ.get("OBS_WS_PORT", "4455") or 4455))
     parser.add_argument("--password", default=os.environ.get("OBS_WS_PASSWORD", ""))
@@ -194,6 +196,27 @@ def main() -> int:
                     result(True, action, "OBS is now streaming")
                     return 0
             result(False, action, "OBS accepted StartStream but the stream did not become active; check Settings > Stream")
+            return 1
+
+        if args.command == "scene":
+            if not args.name:
+                result(False, action, "No scene name given (--name or OBS_PREP_SCENE)")
+                return 1
+            if info["scene"] == args.name:
+                result(True, action, f"OBS is already on scene '{args.name}'")
+                return 0
+            scenes = [s.get("sceneName", "") for s in obs.request("GetSceneList").get("scenes", [])]
+            if args.name not in scenes:
+                result(False, action, f"Scene '{args.name}' does not exist in OBS (have: {', '.join(scenes)})")
+                return 1
+            obs.request("SetCurrentProgramScene", {"sceneName": args.name})
+            now = obs.request("GetCurrentProgramScene")
+            current = now.get("currentProgramSceneName") or now.get("sceneName") or ""
+            print(f"OBS_SCENE={current}")
+            if current == args.name:
+                result(True, action, f"OBS switched to scene '{args.name}'")
+                return 0
+            result(False, action, f"OBS did not switch to '{args.name}' (still on '{current}')")
             return 1
 
         if args.command == "stop":

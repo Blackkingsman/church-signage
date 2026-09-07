@@ -51,6 +51,8 @@ OBS_WS_PASSWORD="${OBS_WS_PASSWORD:-}"
 OBS_REQUIRED_INPUTS="${OBS_REQUIRED_INPUTS:-}"
 OBS_APP_NAME="${OBS_APP_NAME:-OBS}"
 OBS_OPEN_ATTEMPTS="${OBS_OPEN_ATTEMPTS:-18}"
+# Scene to select during "stream prep" (exact OBS scene name); blank to leave as is.
+OBS_PREP_SCENE="${OBS_PREP_SCENE:-}"
 
 CAMERA_PRESET_PREP="${CAMERA_PRESET_PREP:-}"
 CAMERA_VISCA_PORT="${CAMERA_VISCA_PORT:-52381}"
@@ -867,6 +869,25 @@ obs_quit() {
     return 1
 }
 
+obs_scene() {
+    require_mac_config obs-scene || return 1
+
+    local scene="${1:-$OBS_PREP_SCENE}"
+
+    if [[ -z "$scene" ]]; then
+        echo "Usage: media obs scene <scene name>" >&2
+        return 1
+    fi
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        result false obs-scene "OBS is not running"
+        return 1
+    fi
+
+    log "Selecting OBS scene '${scene}'"
+    obs_ctl scene --name "$scene"
+}
+
 obs_stop() {
     require_mac_config obs-stop || return 1
 
@@ -910,6 +931,7 @@ stream_prep() {
     mac_wake || mac_rc=$?
 
     local reboot_rc=0
+    local scene_rc=0
     if [[ "$MAC_REBOOT_PREP" == "1" ]]; then
         echo
         echo "=== MAC REBOOT ==="
@@ -925,7 +947,13 @@ stream_prep() {
     echo "=== OBS ==="
     if [[ "$mac_rc" -eq 0 ]]; then
         obs_open || obs_rc=$?
+        if [[ "$obs_rc" -eq 0 && -n "$OBS_PREP_SCENE" ]]; then
+            echo
+            echo "=== OBS SCENE ==="
+            obs_scene "$OBS_PREP_SCENE" || scene_rc=$?
+        fi
         if [[ "$obs_rc" -eq 0 ]]; then
+            echo
             obs_ctl status || obs_rc=$?
         fi
     else
@@ -938,9 +966,10 @@ stream_prep() {
     echo "PRESET_RESULT=${preset_rc}"
     echo "MAC_RESULT=${mac_rc}"
     [[ "$MAC_REBOOT_PREP" == "1" ]] && echo "REBOOT_RESULT=${reboot_rc}"
+    [[ -n "$OBS_PREP_SCENE" ]] && echo "SCENE_RESULT=${scene_rc}"
     echo "OBS_RESULT=${obs_rc}"
 
-    if [[ "$up_rc" -eq 0 && "$preset_rc" -eq 0 && "$mac_rc" -eq 0 && "$reboot_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
+    if [[ "$up_rc" -eq 0 && "$preset_rc" -eq 0 && "$mac_rc" -eq 0 && "$reboot_rc" -eq 0 && "$scene_rc" -eq 0 && "$obs_rc" -eq 0 ]]; then
         result true stream-prep "Stream is prepped: media system up, camera framed, OBS ready"
         return 0
     fi
@@ -950,6 +979,7 @@ stream_prep() {
         [[ "$up_rc" -eq 2 ]] && notes+=("NDI needs attention")
         [[ "$preset_rc" -ne 0 ]] && notes+=("camera preset failed")
         [[ "$reboot_rc" -ne 0 ]] && notes+=("Mac Mini reboot failed, OBS started on the old boot")
+        [[ "$scene_rc" -ne 0 ]] && notes+=("OBS scene could not be set to ${OBS_PREP_SCENE}")
         [[ "$obs_rc" -eq 2 ]] && notes+=("OBS is missing sources")
         partial_result stream-prep "Stream is mostly prepped: $(IFS='; '; echo "${notes[*]}")"
         return 2
@@ -1387,6 +1417,7 @@ Commands:
 
   obs open                Launch OBS on the Mac Mini
   obs quit                Quit OBS cleanly (Cmd+Q equivalent)
+  obs scene <name>        Switch OBS to a scene (prep uses OBS_PREP_SCENE)
   obs start               Start streaming in OBS
   obs stop                Stop streaming in OBS
   obs status              OBS state, scene, sources, streaming flag
@@ -1542,11 +1573,14 @@ case "$main_command" in
             stop)
                 obs_stop
                 ;;
+            scene)
+                obs_scene "$third_arg"
+                ;;
             status)
                 obs_status
                 ;;
             *)
-                echo "Usage: media obs {open|quit|start|stop|status}" >&2
+                echo "Usage: media obs {open|quit|start|stop|scene <name>|status}" >&2
                 exit 1
                 ;;
         esac

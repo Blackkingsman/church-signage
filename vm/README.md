@@ -57,6 +57,7 @@ OBS_APP_NAME=OBS
 CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; blank to skip
 CAMERA_VISCA_PORT=52381
 MAC_REBOOT_PREP=1                       # reboot the Mac Mini during "stream prep" (see below); 0 to skip
+OBS_PREP_SCENE="Full Screen Computer"   # scene selected during "stream prep"; quote names with spaces
 ```
 
 ### Sunday reboot of the Mac Mini (`MAC_REBOOT_PREP=1`)
