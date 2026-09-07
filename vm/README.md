@@ -71,10 +71,17 @@ USB audio interface a fresh boot every week. It needs, once, on the Mac:
    echo "$USER ALL=(ALL) NOPASSWD: /sbin/shutdown" | sudo tee /etc/sudoers.d/media-reboot
    sudo chmod 440 /etc/sudoers.d/media-reboot
    ```
-2. **System Settings → Users & Groups → Automatic login** set to the OBS user,
+2. FileVault **off** (`sudo fdesetup disable`, then `fdesetup status`).
+   With FileVault on, an Apple Silicon Mac reboots to the unlock screen:
+   sshd is listening but every login is refused until someone types the
+   password at the Mac, and automatic login cannot be enabled at all.
+3. **System Settings → Users & Groups → Automatic login** set to the OBS user,
    so a GUI session exists after the reboot for `open -a OBS` to land in.
-   FileVault must be **off** for automatic login to work.
-3. Test from the VM: `media mac reboot`, then `media obs open`.
+   (Or from a shell on the Mac:
+   `sudo sysadminctl -autologin set -userName <obs user> -password '<password>'`.)
+4. Test from the VM: `media mac reboot`, then `media obs open`.
+   `media mac status` reports `MAC_STATE=ssh-login-refused` when the Mac is
+   stuck at the unlock screen; "awake" means a real SSH login succeeded.
 
 OBS is quit with AppleScript (same as Cmd+Q) before the reboot so it saves
 state; a hard kill makes the next launch stop on the "start in safe mode?"

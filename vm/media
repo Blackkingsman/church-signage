@@ -38,6 +38,7 @@ MAC_SSH_HOST="${MAC_SSH_HOST:-}"
 MAC_SSH_PORT="${MAC_SSH_PORT:-22}"
 MAC_MINI_MAC="${MAC_MINI_MAC:-}"
 MAC_ONLINE_ATTEMPTS="${MAC_ONLINE_ATTEMPTS:-24}"
+MAC_LOGIN_TIMEOUT="${MAC_LOGIN_TIMEOUT:-20}"                  # seconds for a probe SSH login
 # Reboot the Mac Mini during "stream prep" so OBS starts from a clean boot
 # (fixes the USB audio interface not being picked up after days of uptime).
 # Needs passwordless sudo for /sbin/shutdown and automatic login on the Mac.
@@ -628,17 +629,42 @@ mac_ssh_interactive() {
         "$MAC_SSH_HOST"
 }
 
+# True only when we can actually log in, not just when port 22 answers.
+# An Apple Silicon Mac with FileVault on boots far enough to start sshd at
+# the unlock screen, but the user's data volume (and authorized_keys) stays
+# locked, so every login fails until someone types the password at the Mac.
+mac_ssh_ok() {
+    tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT" || return 1
+
+    timeout \
+        --signal=TERM \
+        --kill-after=5s \
+        "$MAC_LOGIN_TIMEOUT" \
+        ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" \
+            -o ConnectionAttempts=1 \
+            -o StrictHostKeyChecking=accept-new \
+            -p "$MAC_SSH_PORT" \
+            "$MAC_SSH_HOST" \
+            true >/dev/null 2>&1
+}
+
 wait_for_mac_online() {
     local attempts="${1:-$MAC_ONLINE_ATTEMPTS}"
     local attempt
 
     for ((attempt=1; attempt<=attempts; attempt++)); do
-        if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
-            log "Mac Mini SSH is ready at ${MAC_MINI_IP}:${MAC_SSH_PORT}"
+        if mac_ssh_ok; then
+            log "Mac Mini SSH login works at ${MAC_MINI_IP}:${MAC_SSH_PORT}"
             return 0
         fi
 
-        log "Waiting for Mac Mini SSH: ${attempt}/${attempts}"
+        if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+            log "Waiting for Mac Mini SSH login (port open, login refused - FileVault unlock screen?): ${attempt}/${attempts}"
+        else
+            log "Waiting for Mac Mini SSH: ${attempt}/${attempts}"
+        fi
         sleep "$WAIT_INTERVAL_SECONDS"
     done
 
@@ -650,21 +676,30 @@ mac_status() {
 
     local ping_state=false
     local ssh_state=false
+    local login_state=false
     local obs_state=false
 
     ping_ok "$MAC_MINI_IP" && ping_state=true
     tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT" && ssh_state=true
+    [[ "$ssh_state" == true ]] && mac_ssh_ok && login_state=true
     tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT" && obs_state=true
 
     echo "MAC_IP=${MAC_MINI_IP}"
     echo "MAC_PING=${ping_state}"
     echo "MAC_SSH=${ssh_state}"
+    echo "MAC_LOGIN=${login_state}"
     echo "OBS_WEBSOCKET=${obs_state}"
 
-    if [[ "$ssh_state" == true ]]; then
+    if [[ "$login_state" == true ]]; then
         echo "MAC_STATE=awake"
         result true mac-status "Mac Mini is awake"
         return 0
+    fi
+
+    if [[ "$ssh_state" == true ]]; then
+        echo "MAC_STATE=ssh-login-refused"
+        result false mac-status "Mac Mini SSH port is open but login is refused (FileVault unlock screen, or the SSH key is missing?)"
+        return 2
     fi
 
     if [[ "$ping_state" == true ]]; then
@@ -683,7 +718,7 @@ mac_wake() {
 
     local attempt
 
-    if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+    if mac_ssh_ok; then
         log "Mac Mini is already awake and SSH-ready"
         result true mac-wake "Mac Mini was already awake"
         return 0
@@ -747,7 +782,11 @@ mac_reboot() {
     fi
 
     if ! wait_for_mac_online "$MAC_REBOOT_ATTEMPTS"; then
-        result false mac-reboot "Mac Mini did not come back after the reboot"
+        if tcp_ok "$MAC_MINI_IP" "$MAC_SSH_PORT"; then
+            result false mac-reboot "Mac Mini rebooted but SSH login is refused - it is probably sitting at the FileVault unlock screen (FileVault must be off and automatic login on)"
+        else
+            result false mac-reboot "Mac Mini did not come back after the reboot"
+        fi
         return 1
     fi
 
