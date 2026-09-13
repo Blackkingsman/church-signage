@@ -65,6 +65,7 @@ OBS_WS_PASSWORD="${OBS_WS_PASSWORD:-}"
 OBS_REQUIRED_INPUTS="${OBS_REQUIRED_INPUTS:-}"
 OBS_AUDIO_INPUTS="${OBS_AUDIO_INPUTS:-}"          # audio source(s) "obs audio" judges; blank = every metered input
 OBS_AUDIO_SECONDS="${OBS_AUDIO_SECONDS:-6}"       # how long "obs audio" listens to the OBS meters
+OBS_AUDIO_SETTLE_SECONDS="${OBS_AUDIO_SETTLE_SECONDS:-8}"   # after an OBS relaunch, before re-checking the meters
 OBS_APP_NAME="${OBS_APP_NAME:-OBS}"
 OBS_OPEN_ATTEMPTS="${OBS_OPEN_ATTEMPTS:-18}"
 # Scene to select during "stream prep" (exact OBS scene name); blank to leave as is.
@@ -901,6 +902,66 @@ obs_audio() {
     obs_ctl audio
 }
 
+# Auto-heal for the macOS Tahoe USB-audio regression: OBS shows the input
+# selected and unmuted but reads -120 dB because coreaudiod silently denied
+# input access ("Client is not granted access to the input device").
+# Restart coreaudiod, relaunch OBS, then re-check the meters. Needs on the Mac:
+#   awesomechurch ALL=(ALL) NOPASSWD: /usr/bin/killall coreaudiod
+obs_audio_heal() {
+    require_mac_config obs-audio-heal || return 1
+
+    local kill_rc=0
+    local obs_rc=0
+    local audio_rc=0
+
+    if ! mac_ssh_ok; then
+        echo "HEAL_RESULT=1"
+        result false obs-audio-heal "Mac Mini SSH is unavailable, so audio cannot be healed"
+        return 1
+    fi
+
+    echo "=== CORE AUDIO ==="
+    log "Restarting coreaudiod on the Mac Mini"
+    if mac_ssh "sudo -n /usr/bin/killall coreaudiod" >/dev/null 2>&1; then
+        echo "HEAL_KILL_RESULT=0"
+    else
+        kill_rc=1
+        echo "HEAL_KILL_RESULT=1"
+        log "killall coreaudiod was refused (add the sudoers line, see vm/README.md)"
+    fi
+    sleep 5
+
+    echo
+    echo "=== OBS RESTART ==="
+    obs_quit || log "OBS did not quit cleanly; relaunching anyway"
+    sleep 3
+    obs_open || obs_rc=$?
+    echo "HEAL_OBS_RESULT=${obs_rc}"
+
+    echo
+    echo "=== AUDIO RECHECK ==="
+    if [[ "$obs_rc" -eq 0 ]]; then
+        sleep "$OBS_AUDIO_SETTLE_SECONDS"
+        obs_ctl audio || audio_rc=$?
+    else
+        audio_rc=1
+        echo "AUDIO_STATE=obs-not-running"
+        echo "AUDIO_RESULT=1"
+    fi
+
+    echo
+    echo "HEAL_RESULT=${audio_rc}"
+    if [[ "$audio_rc" -eq 0 ]]; then
+        result true obs-audio-heal "Audio healed: coreaudiod restarted, OBS relaunched, sound is reaching OBS again"
+        return 0
+    fi
+
+    local why="Audio is still not reaching OBS after restarting coreaudiod and OBS; a Mac Mini restart is needed"
+    [[ "$kill_rc" -ne 0 ]] && why="coreaudiod could not be restarted (sudoers line missing on the Mac) and audio is still not reaching OBS; a Mac Mini restart is needed"
+    result false obs-audio-heal "$why"
+    return 1
+}
+
 obs_status() {
     require_mac_config obs-status || return 1
 
@@ -1511,6 +1572,7 @@ Commands:
   obs stop                Stop streaming in OBS
   obs status              OBS state, scene, sources, streaming flag
   obs audio               Is OBS receiving sound? Peak level on OBS_AUDIO_INPUTS over a few seconds
+  obs audio-heal          Restart coreaudiod + OBS, then re-check audio (macOS USB-audio bug)
 
   help                    Show this help message
 
@@ -1677,11 +1739,14 @@ case "$main_command" in
             audio|sound)
                 obs_audio
                 ;;
+            audio-heal|heal)
+                obs_audio_heal
+                ;;
             status)
                 obs_status
                 ;;
             *)
-                echo "Usage: media obs {open|quit|start|stop|scene <name>|audio|status}" >&2
+                echo "Usage: media obs {open|quit|start|stop|scene <name>|audio|audio-heal|status}" >&2
                 exit 1
                 ;;
         esac

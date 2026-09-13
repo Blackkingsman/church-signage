@@ -12,6 +12,7 @@ media stream start|stop|status     OBS Start/Stop Streaming, readiness summary
 media mac status|wake|ssh          Mac Mini
 media obs open|start|stop|status   OBS on the Mac Mini (obs-websocket)
 media obs audio                    is OBS receiving sound from the mixer? (peak level over a few seconds)
+media obs audio-heal               restart coreaudiod + OBS and re-check (macOS USB-audio bug)
 media camera preset N              OBSBOT Tail Air VISCA-over-IP preset recall
 ```
 
@@ -104,6 +105,38 @@ input): `AUDIO_STATE=ok|quiet|silent|muted|missing`, `AUDIO_PEAK_DB`,
 `AUDIO_RESULT` 0/2/1. The Sunday automation runs it at 10:30, when the worship
 team is already playing, and posts a warning to the group if OBS hears nothing.
 It only proves that signal reaches OBS; it cannot judge the mix.
+
+### Audio auto-heal (`media obs audio-heal`)
+
+macOS Tahoe 26.6.x has a regression where a USB audio device reconfiguration
+makes coreaudiod silently deny OBS input access: the source looks selected and
+unmuted but reads -120 dB (`coreaudiod` logs "Client is not granted access to
+the input device"). It recurs on its own every so often. `obs audio-heal`
+restarts coreaudiod, relaunches OBS, and re-checks the meters; the Sunday
+automation runs it automatically when the 10:30 / 10:55 check hears nothing,
+and asks in the group for a Mac restart only if that does not help. It needs,
+once, on the Mac (as the OBS user):
+
+```
+echo "$USER ALL=(ALL) NOPASSWD: /sbin/shutdown, /usr/bin/killall coreaudiod" | sudo tee /etc/sudoers.d/media-reboot
+sudo chmod 440 /etc/sudoers.d/media-reboot
+```
+
+Because the bug arrived with an OS update nobody scheduled, turn off automatic
+macOS updates on this Mac and update it deliberately:
+
+```
+sudo softwareupdate --schedule off
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool false
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool false
+sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool false
+```
+
+(System Settings → General → Software Update → ⓘ next to Automatic updates
+should then show everything off.)
 
 ### Encoder check
 
