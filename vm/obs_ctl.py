@@ -14,6 +14,7 @@ Usage:
   obs_ctl.py start
   obs_ctl.py stop
   obs_ctl.py scene --name "Full Screen Computer"
+  obs_ctl.py audio [--inputs "Capture Card Device"] [--seconds 6]
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -41,10 +43,11 @@ def result(success: bool, action: str, message: str, partial: bool = False) -> N
 
 
 class Obs:
-    def __init__(self, host: str, port: int, password: str, timeout: float = 5.0):
+    def __init__(self, host: str, port: int, password: str, timeout: float = 5.0, event_subscriptions: int = 0):
         self.url = f"ws://{host}:{port}"
         self.password = password
         self.timeout = timeout
+        self.event_subscriptions = event_subscriptions
         self.ws = None
         self._req = 0
 
@@ -53,7 +56,7 @@ class Obs:
         hello = json.loads(self.ws.recv())
         if hello.get("op") != 0:
             raise RuntimeError(f"unexpected first message: {hello}")
-        identify = {"rpcVersion": 1, "eventSubscriptions": 0}
+        identify = {"rpcVersion": 1, "eventSubscriptions": self.event_subscriptions}
         auth = hello.get("d", {}).get("authentication")
         if auth:
             if not self.password:
@@ -140,15 +143,112 @@ def snapshot(obs: Obs, required: list[str]) -> dict:
     return info
 
 
+# obs-websocket EventSubscription::InputVolumeMeters (high-volume, opt-in).
+EVENT_INPUT_VOLUME_METERS = 1 << 16
+
+
+def mul_to_db(mul: float) -> float:
+    return 20.0 * math.log10(mul) if mul and mul > 0 else -120.0
+
+
+def audio_check(obs: Obs, targets: list[str], seconds: float, quiet_db: float, silent_db: float) -> tuple[int, str]:
+    """Listen to OBS's audio meters for `seconds` and report the peak per input."""
+    inputs = [i.get("inputName", "") for i in obs.request("GetInputList").get("inputs", [])]
+    peaks: dict[str, float] = {}
+    deadline = time.time() + seconds
+    obs.ws.settimeout(1.0)
+    while time.time() < deadline:
+        try:
+            msg = json.loads(obs.ws.recv())
+        except websocket.WebSocketTimeoutException:
+            continue
+        if msg.get("op") != 5 or msg.get("d", {}).get("eventType") != "InputVolumeMeters":
+            continue
+        for entry in msg["d"].get("eventData", {}).get("inputs", []):
+            name = entry.get("inputName", "")
+            levels = entry.get("inputLevelsMul") or []
+            peak = 0.0
+            for ch in levels:
+                if ch:
+                    peak = max(peak, float(ch[1] if len(ch) > 1 else ch[0]))
+            peaks[name] = max(peaks.get(name, 0.0), peak)
+    obs.ws.settimeout(obs.timeout)
+
+    metered = sorted(peaks.keys())
+    if not targets:
+        targets = metered
+    levels_line = "; ".join(f"{n}={mul_to_db(peaks.get(n, 0.0)):.1f}dB" for n in metered) or "(no audio inputs reported levels)"
+    print(f"AUDIO_SECONDS={int(seconds)}")
+    print(f"AUDIO_LEVELS={levels_line}")
+
+    states = []
+    for name in targets:
+        if name not in inputs:
+            states.append((name, "missing", -120.0, False))
+            continue
+        muted = False
+        try:
+            muted = bool(obs.request("GetInputMute", {"inputName": name}).get("inputMuted"))
+        except Exception:
+            muted = False
+        db = mul_to_db(peaks.get(name, 0.0))
+        if muted:
+            state = "muted"
+        elif name not in peaks:
+            state = "no-meter"
+        elif db < silent_db:
+            state = "silent"
+        elif db < quiet_db:
+            state = "quiet"
+        else:
+            state = "ok"
+        states.append((name, state, db, muted))
+
+    best = max(states, key=lambda t: t[2]) if states else ("", "missing", -120.0, False)
+    name, state, db, muted = best
+    print(f"AUDIO_INPUT={name}")
+    print(f"AUDIO_PEAK_DB={db:.1f}")
+    print(f"AUDIO_MUTED={'true' if muted else 'false'}")
+    print(f"AUDIO_STATE={state}")
+    problems = [f"'{n}' is {st}" for n, st, _, _ in states if st not in ("ok", "quiet")]
+
+    if state == "ok":
+        code = 0
+        msg = f"OBS is receiving audio on '{name}' (peak {db:.0f} dB over {int(seconds)} s)"
+        if problems:
+            msg += "; " + ", ".join(problems)
+    elif state == "quiet":
+        code = 2
+        msg = f"Audio on '{name}' is very quiet (peak {db:.0f} dB over {int(seconds)} s) — check the mixer send level"
+    elif state == "muted":
+        code = 1
+        msg = f"'{name}' is MUTED in OBS — unmute it in the audio mixer panel"
+    elif state == "missing":
+        code = 1
+        msg = f"OBS has no input named '{name}' (have: {', '.join(inputs) or 'none'}) — set OBS_AUDIO_INPUTS to the audio source name"
+    elif state == "no-meter":
+        code = 1
+        msg = f"OBS reports no audio meter for '{name}' — the device may be disconnected or the source has no audio"
+    else:
+        code = 1
+        msg = f"NO audio on '{name}' for {int(seconds)} s (peak {db:.0f} dB) — check the X32 USB link, the mixer routing, and that the input is not muted"
+    print(f"AUDIO_RESULT={code}")
+    return code, msg
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["status", "start", "stop", "scene"])
+    parser.add_argument("command", choices=["status", "start", "stop", "scene", "audio"])
     parser.add_argument("--name", default=os.environ.get("OBS_PREP_SCENE", ""), help="scene name for the scene command")
     parser.add_argument("--host", default=os.environ.get("OBS_WS_HOST", ""))
     parser.add_argument("--port", type=int, default=int(os.environ.get("OBS_WS_PORT", "4455") or 4455))
     parser.add_argument("--password", default=os.environ.get("OBS_WS_PASSWORD", ""))
     parser.add_argument("--required-inputs", default=os.environ.get("OBS_REQUIRED_INPUTS", ""))
     parser.add_argument("--wait", type=int, default=20, help="seconds to wait for streaming state to change")
+    parser.add_argument("--inputs", default=os.environ.get("OBS_AUDIO_INPUTS", ""), help="comma-separated audio inputs to judge (default: every input with a meter)")
+    parser.add_argument("--seconds", type=float, default=float(os.environ.get("OBS_AUDIO_SECONDS", "6") or 6), help="how long to listen to the meters")
+    parser.add_argument("--quiet-db", type=float, default=-40.0)
+    parser.add_argument("--silent-db", type=float, default=-60.0)
     args = parser.parse_args()
 
     if not args.host:
@@ -157,7 +257,8 @@ def main() -> int:
         return 1
 
     required = [s.strip() for s in args.required_inputs.split(",") if s.strip()]
-    obs = Obs(args.host, args.port, args.password)
+    obs = Obs(args.host, args.port, args.password,
+              event_subscriptions=EVENT_INPUT_VOLUME_METERS if args.command == "audio" else 0)
     try:
         obs.connect()
     except Exception as e:
@@ -167,6 +268,12 @@ def main() -> int:
 
     action = f"obs-{args.command}"
     try:
+        if args.command == "audio":
+            targets = [s.strip() for s in args.inputs.split(",") if s.strip()]
+            code, msg = audio_check(obs, targets, args.seconds, args.quiet_db, args.silent_db)
+            result(code == 0, action, msg, partial=(code == 2))
+            return code
+
         info = snapshot(obs, required)
 
         if args.command == "status":

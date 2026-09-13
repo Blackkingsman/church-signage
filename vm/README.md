@@ -11,6 +11,7 @@ media stream prep                  up + camera preset + wake Mac Mini + open OBS
 media stream start|stop|status     OBS Start/Stop Streaming, readiness summary
 media mac status|wake|ssh          Mac Mini
 media obs open|start|stop|status   OBS on the Mac Mini (obs-websocket)
+media obs audio                    is OBS receiving sound from the mixer? (peak level over a few seconds)
 media camera preset N              OBSBOT Tail Air VISCA-over-IP preset recall
 ```
 
@@ -58,6 +59,8 @@ CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; 
 CAMERA_VISCA_PORT=52381
 OBS_PREP_SCENE="Full Screen Computer"   # scene selected during "stream prep"; quote names with spaces
 MEDIAMTX_URL=http://192.168.2.40:8888/  # lobby stream server (MediaMTX HLS); probed by check_mediamtx.sh for the Sunday report
+OBS_AUDIO_INPUTS="Capture Card Device"  # audio source "media obs audio" judges (the X32 USB input); blank = every metered input
+OBS_AUDIO_SECONDS=6                      # how long the audio check listens
 MEDIA_LOG_FILE=/home/awesomechurch/awesomechurch-media.log   # every `media` run is appended here (default); "" disables
 ```
 
@@ -92,6 +95,15 @@ USB audio interface a fresh boot every week. It needs, once, on the Mac:
 OBS is quit with AppleScript (same as Cmd+Q) before the reboot so it saves
 state; a hard kill makes the next launch stop on the "start in safe mode?"
 dialog, and the WebSocket never comes up.
+
+### Audio check (`media obs audio`)
+
+OBS streams its audio meters over the WebSocket. `obs audio` listens for
+`OBS_AUDIO_SECONDS` and reports the peak on `OBS_AUDIO_INPUTS` (the mixer's USB
+input): `AUDIO_STATE=ok|quiet|silent|muted|missing`, `AUDIO_PEAK_DB`,
+`AUDIO_RESULT` 0/2/1. The Sunday automation runs it at 10:30, when the worship
+team is already playing, and posts a warning to the group if OBS hears nothing.
+It only proves that signal reaches OBS; it cannot judge the mix.
 
 ### Encoder check
 

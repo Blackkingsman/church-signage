@@ -63,6 +63,8 @@ OBS_WS_HOST="${OBS_WS_HOST:-$MAC_MINI_IP}"
 OBS_WS_PORT="${OBS_WS_PORT:-4455}"
 OBS_WS_PASSWORD="${OBS_WS_PASSWORD:-}"
 OBS_REQUIRED_INPUTS="${OBS_REQUIRED_INPUTS:-}"
+OBS_AUDIO_INPUTS="${OBS_AUDIO_INPUTS:-}"          # audio source(s) "obs audio" judges; blank = every metered input
+OBS_AUDIO_SECONDS="${OBS_AUDIO_SECONDS:-6}"       # how long "obs audio" listens to the OBS meters
 OBS_APP_NAME="${OBS_APP_NAME:-OBS}"
 OBS_OPEN_ATTEMPTS="${OBS_OPEN_ATTEMPTS:-18}"
 # Scene to select during "stream prep" (exact OBS scene name); blank to leave as is.
@@ -819,6 +821,8 @@ obs_ctl() {
     OBS_WS_PORT="$OBS_WS_PORT" \
     OBS_WS_PASSWORD="$OBS_WS_PASSWORD" \
     OBS_REQUIRED_INPUTS="$OBS_REQUIRED_INPUTS" \
+    OBS_AUDIO_INPUTS="$OBS_AUDIO_INPUTS" \
+    OBS_AUDIO_SECONDS="$OBS_AUDIO_SECONDS" \
         "$PY" "$TOOLS_DIR/obs_ctl.py" "$@"
 }
 
@@ -880,6 +884,21 @@ obs_open() {
 
     result false obs-open "OBS launched but its WebSocket server never came up (OBS > Tools > WebSocket Server Settings)"
     return 1
+}
+
+# Is OBS actually receiving sound from the mixer? Listens to the OBS audio
+# meters for OBS_AUDIO_SECONDS and reports the peak on OBS_AUDIO_INPUTS.
+obs_audio() {
+    require_mac_config obs-audio || return 1
+
+    if ! tcp_ok "$OBS_WS_HOST" "$OBS_WS_PORT"; then
+        echo "AUDIO_STATE=obs-not-running"
+        echo "AUDIO_RESULT=1"
+        result false obs-audio "OBS is not running, so there is no audio to check"
+        return 1
+    fi
+
+    obs_ctl audio
 }
 
 obs_status() {
@@ -1491,6 +1510,7 @@ Commands:
   obs start               Start streaming in OBS
   obs stop                Stop streaming in OBS
   obs status              OBS state, scene, sources, streaming flag
+  obs audio               Is OBS receiving sound? Peak level on OBS_AUDIO_INPUTS over a few seconds
 
   help                    Show this help message
 
@@ -1654,11 +1674,14 @@ case "$main_command" in
             scene)
                 obs_scene "$third_arg"
                 ;;
+            audio|sound)
+                obs_audio
+                ;;
             status)
                 obs_status
                 ;;
             *)
-                echo "Usage: media obs {open|quit|start|stop|scene <name>|status}" >&2
+                echo "Usage: media obs {open|quit|start|stop|scene <name>|audio|status}" >&2
                 exit 1
                 ;;
         esac
