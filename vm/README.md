@@ -57,7 +57,12 @@ OBS_APP_NAME=OBS
 CAMERA_PRESET_PREP=1                    # preset recalled during "stream prep"; blank to skip
 CAMERA_VISCA_PORT=52381
 OBS_PREP_SCENE="Full Screen Computer"   # scene selected during "stream prep"; quote names with spaces
+MEDIAMTX_URL=http://192.168.2.40:8888/  # lobby stream server (MediaMTX HLS); probed by check_mediamtx.sh for the Sunday report
+MEDIA_LOG_FILE=/home/awesomechurch/awesomechurch-media.log   # every `media` run is appended here (default); "" disables
 ```
+
+`tail -n 80 ~/awesomechurch-media.log` on the VM shows what the last run did even
+when the SSH session that started it dropped.
 
 ### Sunday reboot of the Mac Mini (`media stream prep --reboot-mac`)
 

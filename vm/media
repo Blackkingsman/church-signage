@@ -13,6 +13,16 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
+# Keep a copy of every run on the VM itself, so a dropped SSH session from n8n
+# never loses the story. Set MEDIA_LOG_FILE="" in the env file to disable.
+MEDIA_LOG_FILE="${MEDIA_LOG_FILE-$HOME/awesomechurch-media.log}"
+if [[ -n "$MEDIA_LOG_FILE" ]] && touch "$MEDIA_LOG_FILE" 2>/dev/null; then
+    exec > >(tee -a "$MEDIA_LOG_FILE") 2>&1
+    printf '
+===== %s: media %s =====
+' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+fi
+
 # Safe defaults. Any of these can be overridden in /etc/awesomechurch-media.env.
 SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
 SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-90}"
