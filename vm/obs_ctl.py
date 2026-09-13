@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover
 
 def result(success: bool, action: str, message: str, partial: bool = False) -> None:
     print(json.dumps({"success": success, "partial_success": partial,
-                      "action": action, "message": message}))
+                      "action": action, "message": message}, ensure_ascii=False))
 
 
 class Obs:
