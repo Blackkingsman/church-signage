@@ -12,6 +12,7 @@
 # followed by one JSON result line. Exit code 0 = signage is running.
 #
 # Usage (on the VM):  ~/photowall/check_signage.sh
+#   SIGNAGE_AUTOSTART=0 ~/photowall/check_signage.sh   (report only, never restart)
 
 set -uo pipefail
 
@@ -60,7 +61,11 @@ EOF
 check_status
 action=none
 
-if [[ "$server" != up || "$bridge" != up ]]; then
+# SIGNAGE_AUTOSTART=0 makes this a pure check ("media check all"); the
+# default keeps the Sunday auto-restart behaviour.
+if [[ "$server" != up || "$bridge" != up ]] && [[ "${SIGNAGE_AUTOSTART:-1}" == "0" ]]; then
+  log "Signage not fully running (server=$server bridge=$bridge) - not restarting (check only)"
+elif [[ "$server" != up || "$bridge" != up ]]; then
   log "Signage not fully running (server=$server bridge=$bridge) - starting"
   if ./start_signage.sh >>"$LOG_DIR/check_signage.log" 2>&1; then
     action=started

@@ -15,6 +15,14 @@ source "$CONFIG_FILE"
 
 # Keep a copy of every run on the VM itself, so a dropped SSH session from n8n
 # never loses the story. Set MEDIA_LOG_FILE="" in the env file to disable.
+# "media check all": where the signage checkout lives on this VM and which
+# public sites to probe (space-separated URLs; blank disables the website check).
+PHOTOWALL_DIR="${PHOTOWALL_DIR:-/home/awesomechurch/photowall}"
+WEBSITE_URLS="${WEBSITE_URLS:-https://awesomechurch.kr https://api.awesomechurch.kr https://awesomechurchkorea.com https://api.awesomechurchkorea.com}"
+WEBSITE_TIMEOUT="${WEBSITE_TIMEOUT:-10}"
+VM_DISK_WARN_PERCENT="${VM_DISK_WARN_PERCENT:-90}"
+TAILSCALE_PEER="${TAILSCALE_PEER:-}"   # Tailscale IP of the home Pi; blank skips the direct/relay check
+
 MEDIA_LOG_FILE="${MEDIA_LOG_FILE-$HOME/awesomechurch-media.log}"
 if [[ -n "$MEDIA_LOG_FILE" ]] && touch "$MEDIA_LOG_FILE" 2>/dev/null; then
     exec > >(tee -a "$MEDIA_LOG_FILE") 2>&1
@@ -1487,6 +1495,235 @@ system_down() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# Read-only health checks. "check media" covers every media device (camera,
+# media PC, NDI, Mac Mini, OBS, OBS audio). "check all" adds the signage, the
+# lobby stream server, this VM, and the public websites. Nothing is woken,
+# started, or restarted.
+# ---------------------------------------------------------------------------
+
+check_media() {
+    local camera_rc=0 pc_rc=0 ndi_rc=0 mac_rc=0 obs_rc=0 audio_rc=0
+    local obs_output
+
+    echo "=== CAMERA ==="
+    camera_status || camera_rc=$?
+
+    echo
+    echo "=== COMPUTER ==="
+    pc_status || pc_rc=$?
+
+    echo
+    echo "=== NDI ==="
+    if [[ "$pc_rc" -eq 0 ]]; then
+        ndi_status || ndi_rc=$?
+    else
+        echo "NDI_STATE=computer-offline"
+        result false ndi-status "NDI not checked because the media PC is offline"
+        ndi_rc=1
+    fi
+
+    echo
+    echo "=== MAC MINI ==="
+    mac_status || mac_rc=$?
+
+    echo
+    echo "=== OBS ==="
+    if [[ "$mac_rc" -eq 0 ]]; then
+        obs_output="$(obs_status)" || obs_rc=$?
+        printf '%s\n' "$obs_output"
+    else
+        echo "OBS_STATE=mac-offline"
+        result false obs-status "OBS not checked because the Mac Mini is offline"
+        obs_rc=1
+    fi
+
+    echo
+    echo "=== OBS AUDIO ==="
+    if [[ "$obs_rc" -eq 0 && "$obs_output" == *"OBS_STATE=running"* ]]; then
+        obs_audio || audio_rc=$?
+    else
+        echo "AUDIO_STATE=obs-not-running"
+        result false obs-audio "Audio not checked because OBS is not running"
+        audio_rc=1
+    fi
+
+    echo
+    echo "CAMERA_RESULT=${camera_rc}"
+    echo "PC_RESULT=${pc_rc}"
+    echo "NDI_RESULT=${ndi_rc}"
+    echo "MAC_RESULT=${mac_rc}"
+    echo "OBS_RESULT=${obs_rc}"
+    echo "AUDIO_RESULT=${audio_rc}"
+
+    local problems=()
+    [[ "$camera_rc" -eq 0 ]] || problems+=("camera")
+    [[ "$pc_rc" -eq 0 ]] || problems+=("media PC")
+    [[ "$ndi_rc" -eq 0 ]] || problems+=("NDI")
+    [[ "$mac_rc" -eq 0 ]] || problems+=("Mac Mini")
+    [[ "$obs_rc" -eq 0 ]] || problems+=("OBS")
+    [[ "$audio_rc" -eq 0 ]] || problems+=("OBS audio")
+
+    if [[ "${#problems[@]}" -eq 0 ]]; then
+        result true check-media "All media systems are healthy: camera, media PC, NDI, Mac Mini, OBS and audio"
+        return 0
+    fi
+
+    local joined
+    joined="$(IFS=', '; echo "${problems[*]}")"
+    result false check-media "Media check found problems with: ${joined}"
+    return 1
+}
+
+check_signage() {
+    local script="${PHOTOWALL_DIR}/check_signage.sh"
+    if [[ ! -x "$script" ]]; then
+        echo "SIGNAGE_RESULT=1"
+        result false signage-check "Signage check script not found at ${script}"
+        return 1
+    fi
+    SIGNAGE_AUTOSTART=0 "$script"
+}
+
+check_mediamtx() {
+    local script="${PHOTOWALL_DIR}/check_mediamtx.sh"
+    if [[ ! -x "$script" ]]; then
+        echo "MEDIAMTX_RESULT=1"
+        result false mediamtx-check "Lobby stream server check script not found at ${script}"
+        return 1
+    fi
+    "$script"
+}
+
+check_vm() {
+    local up load disk_pct disk_free mem_pct root_fs
+
+    up="$(uptime -p 2>/dev/null || true)"
+    load="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || true)"
+    root_fs="$(df -P / 2>/dev/null | awk 'NR==2 {print $5" "$4}')"
+    disk_pct=""; disk_free=""
+    if [[ "$root_fs" =~ ^([0-9]+)%\ ([0-9]+)$ ]]; then
+        disk_pct="${BASH_REMATCH[1]}"
+        disk_free="$(( BASH_REMATCH[2] / 1024 ))"
+    fi
+    mem_pct="$(free 2>/dev/null | awk '/^Mem:/ {printf "%d", $3*100/$2}')"
+
+    echo "VM_UPTIME=${up}"
+    echo "VM_LOAD=${load}"
+    echo "VM_DISK_USED_PERCENT=${disk_pct}"
+    echo "VM_DISK_FREE_MB=${disk_free}"
+    echo "VM_MEMORY_USED_PERCENT=${mem_pct}"
+
+    local ts_state="unknown"
+    if command -v tailscale >/dev/null 2>&1; then
+        if tailscale status >/dev/null 2>&1; then
+            ts_state="up"
+            if [[ -n "$TAILSCALE_PEER" ]]; then
+                local ping_out
+                ping_out="$(timeout 20 tailscale ping -c 1 --timeout 5s "$TAILSCALE_PEER" 2>&1 || true)"
+                if [[ "$ping_out" == *"via DERP"* ]]; then
+                    echo "VM_TAILSCALE_PEER=relayed"
+                elif [[ "$ping_out" == *"pong from"* ]]; then
+                    echo "VM_TAILSCALE_PEER=direct"
+                else
+                    echo "VM_TAILSCALE_PEER=unreachable"
+                fi
+            fi
+        else
+            ts_state="down"
+        fi
+    fi
+    echo "VM_TAILSCALE=${ts_state}"
+
+    local problems=()
+    [[ -n "$disk_pct" && "$disk_pct" -ge "$VM_DISK_WARN_PERCENT" ]] && problems+=("disk ${disk_pct}% full")
+    [[ "$ts_state" == "down" ]] && problems+=("Tailscale is down")
+
+    if [[ "${#problems[@]}" -eq 0 ]]; then
+        echo "VM_RESULT=0"
+        result true vm-check "VM is healthy (disk ${disk_pct:-?}% used, memory ${mem_pct:-?}% used)"
+        return 0
+    fi
+    echo "VM_RESULT=1"
+    result false vm-check "VM needs attention: $(IFS=', '; echo "${problems[*]}")"
+    return 1
+}
+
+check_websites() {
+    local url http ms down=()
+
+    if [[ -z "$WEBSITE_URLS" ]]; then
+        echo "WEBSITE_RESULT=0"
+        result true website-check "No websites configured (WEBSITE_URLS is blank)"
+        return 0
+    fi
+
+    for url in $WEBSITE_URLS; do
+        http="$(curl -sS -o /dev/null -L -m "$WEBSITE_TIMEOUT" -A "awesomechurch-media-check" \
+            -w '%{http_code} %{time_total}' "$url" 2>/dev/null || true)"
+        ms="$(awk -v t="${http#* }" 'BEGIN { printf "%d", t * 1000 }' 2>/dev/null)"
+        http="${http%% *}"
+        [[ "$http" =~ ^[0-9]{3}$ ]] || http="000"
+        echo "WEBSITE=${url} HTTP=${http} MS=${ms:-0}"
+        if [[ "$http" == "000" || "$http" -ge 500 ]]; then
+            down+=("${url#https://} (HTTP ${http})")
+        fi
+    done
+
+    if [[ "${#down[@]}" -eq 0 ]]; then
+        echo "WEBSITE_RESULT=0"
+        result true website-check "All websites are responding"
+        return 0
+    fi
+    echo "WEBSITE_RESULT=1"
+    result false website-check "Website problems: $(IFS=', '; echo "${down[*]}")"
+    return 1
+}
+
+check_all() {
+    local media_rc=0 signage_rc=0 mediamtx_rc=0 vm_rc=0 web_rc=0
+
+    echo "##### MEDIA #####"
+    check_media || media_rc=$?
+
+    echo
+    echo "##### SIGNAGE #####"
+    check_signage || signage_rc=$?
+
+    echo
+    echo "##### LOBBY STREAM SERVER #####"
+    check_mediamtx || mediamtx_rc=$?
+
+    echo
+    echo "##### VM #####"
+    check_vm || vm_rc=$?
+
+    echo
+    echo "##### WEBSITES #####"
+    check_websites || web_rc=$?
+
+    echo
+    echo "MEDIA_CHECK_RESULT=${media_rc}"
+    echo "SIGNAGE_CHECK_RESULT=${signage_rc}"
+    echo "MEDIAMTX_CHECK_RESULT=${mediamtx_rc}"
+    echo "VM_CHECK_RESULT=${vm_rc}"
+    echo "WEBSITE_CHECK_RESULT=${web_rc}"
+
+    local problems=()
+    [[ "$media_rc" -eq 0 ]] || problems+=("media")
+    [[ "$signage_rc" -eq 0 ]] || problems+=("signage")
+    [[ "$mediamtx_rc" -eq 0 ]] || problems+=("lobby stream server")
+    [[ "$vm_rc" -eq 0 ]] || problems+=("VM")
+    [[ "$web_rc" -eq 0 ]] || problems+=("websites")
+
+    if [[ "${#problems[@]}" -eq 0 ]]; then
+        result true check-all "All systems are healthy: media, signage, lobby stream server, VM and websites"
+        return 0
+    fi
+    result false check-all "System check found problems with: $(IFS=', '; echo "${problems[*]}")"
+    return 1
+}
+
 system_status() {
     local camera_rc=0
     local pc_rc=0
@@ -1537,6 +1774,8 @@ Commands:
   sleep                   Stop NDI, sleep the PC, and power off the camera
   down                    Stop NDI, shut down the PC, and power off the camera
   status                  Show the status of the camera, PC, and NDI
+  check media             Read-only health check of every media device: camera, PC, NDI, Mac Mini, OBS, audio
+  check all               check media + signage + lobby stream server + this VM + website uptime
   ssh                     Open an SSH session to the media PC
 
   stream prep             up + camera preset + wake Mac Mini + open OBS + check sources
@@ -1604,6 +1843,30 @@ case "$main_command" in
 
     status)
         system_status
+        ;;
+
+    check)
+        case "$sub_command" in
+            media)
+                check_media
+                ;;
+            all|everything|"")
+                check_all
+                ;;
+            signage)
+                check_signage
+                ;;
+            vm)
+                check_vm
+                ;;
+            web|websites)
+                check_websites
+                ;;
+            *)
+                echo "Usage: media check {media|all|signage|vm|web}" >&2
+                exit 1
+                ;;
+        esac
         ;;
 
     stream)

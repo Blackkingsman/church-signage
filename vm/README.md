@@ -7,6 +7,8 @@ the VM; the values below are placeholders.
 
 ```
 media up|sleep|down|status         camera + media PC + NDI (unchanged)
+media check media                  read-only: camera, media PC, NDI, Mac Mini, OBS, OBS audio
+media check all                    check media + signage + lobby stream server + VM + website uptime
 media stream prep                  up + camera preset + wake Mac Mini + open OBS + verify sources
 media stream start|stop|status     OBS Start/Stop Streaming, readiness summary
 media mac status|wake|ssh          Mac Mini
@@ -62,6 +64,9 @@ OBS_PREP_SCENE="Full Screen Computer"   # scene selected during "stream prep"; q
 MEDIAMTX_URL=http://192.168.2.40:8888/  # lobby stream server (MediaMTX HLS); probed by check_mediamtx.sh for the Sunday report
 OBS_AUDIO_INPUTS="Capture Card Device"  # audio source "media obs audio" judges (the X32 USB input); blank = every metered input
 OBS_AUDIO_SECONDS=6                      # how long the audio check listens
+PHOTOWALL_DIR=/home/awesomechurch/photowall   # signage checkout; "media check all" runs its check_*.sh
+WEBSITE_URLS="https://awesomechurch.kr https://api.awesomechurch.kr"   # probed by "media check all"; blank disables
+TAILSCALE_PEER=100.x.y.z                # Tailscale IP of the home Pi; "media check all" reports direct vs relayed
 MEDIA_LOG_FILE=/home/awesomechurch/awesomechurch-media.log   # every `media` run is appended here (default); "" disables
 ```
 
@@ -156,3 +161,14 @@ parse (`CAMERA_RESULT`, `PC_RESULT`, `NDI_RESULT`, `MAC_RESULT`, `OBS_RESULT`,
 `OBS_STREAMING`, …) and finally one JSON line:
 `{"success":true|false,"partial_success":bool,"action":"…","message":"…"}`.
 Exit code 0 = success, 2 = partial, 1 = failure.
+
+### Health checks (`media check media`, `media check all`)
+
+Both are read-only: nothing is woken, launched or restarted (the signage
+check runs with `SIGNAGE_AUTOSTART=0`). `check media` walks camera → media PC
+→ NDI → Mac Mini → OBS → OBS audio and prints one `*_RESULT=` line per device.
+`check all` wraps that in `##### MEDIA #####` and adds `SIGNAGE`, `LOBBY
+STREAM SERVER`, `VM` (uptime, load, disk %, memory %, Tailscale state) and
+`WEBSITES` (`WEBSITE=<url> HTTP=<code> MS=<latency>`) sections, then
+`*_CHECK_RESULT=` lines and one JSON summary. The Telegram bot maps
+"check media" and "check all systems" to these.
