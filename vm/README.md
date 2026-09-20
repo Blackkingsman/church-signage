@@ -16,6 +16,7 @@ media obs open|start|stop|status   OBS on the Mac Mini (obs-websocket)
 media obs audio                    is OBS receiving sound from the mixer? (peak level over a few seconds)
 media obs audio-heal               restart coreaudiod + OBS and re-check (macOS USB-audio bug)
 media camera preset N              OBSBOT Tail Air VISCA-over-IP preset recall
+media camera restart               PoE power-cycle (off, on, preset) for a frozen camera
 ```
 
 ## Topology

@@ -39,6 +39,8 @@ POE_REQUEST_TIMEOUT="${POE_REQUEST_TIMEOUT:-90}"
 
 CAMERA_ON_ATTEMPTS="${CAMERA_ON_ATTEMPTS:-36}"
 CAMERA_OFF_ATTEMPTS="${CAMERA_OFF_ATTEMPTS:-24}"
+CAMERA_RESTART_PAUSE_SECONDS="${CAMERA_RESTART_PAUSE_SECONDS:-10}"    # off time during "camera restart"
+CAMERA_RESTART_SETTLE_SECONDS="${CAMERA_RESTART_SETTLE_SECONDS:-15}"  # boot time before recalling the preset
 PC_ONLINE_ATTEMPTS="${PC_ONLINE_ATTEMPTS:-48}"
 PC_OFFLINE_ATTEMPTS="${PC_OFFLINE_ATTEMPTS:-24}"
 
@@ -344,6 +346,53 @@ camera_off() {
 
     result false camera-off "Camera still responds after PoE was disabled"
     return 1
+}
+
+# Power-cycle the camera over PoE: off, wait until it stops answering, back on,
+# wait until it is online again, then (if configured) recall the Sunday preset
+# so it comes back framed instead of at its power-on position.
+camera_restart() {
+    local off_rc=0 on_rc=0 preset_rc=0
+
+    echo "=== CAMERA OFF ==="
+    camera_off || off_rc=$?
+
+    if [[ "$off_rc" -ne 0 ]]; then
+        echo "CAMERA_OFF_RESULT=${off_rc}"
+        result false camera-restart "Could not power the camera off, so it was not restarted"
+        return 1
+    fi
+
+    log "Camera is off; waiting ${CAMERA_RESTART_PAUSE_SECONDS}s before powering it back on"
+    sleep "$CAMERA_RESTART_PAUSE_SECONDS"
+
+    echo
+    echo "=== CAMERA ON ==="
+    camera_on || on_rc=$?
+
+    if [[ "$on_rc" -eq 0 && -n "$CAMERA_PRESET_PREP" ]]; then
+        echo
+        echo "=== CAMERA PRESET ==="
+        log "Giving the camera ${CAMERA_RESTART_SETTLE_SECONDS}s to finish booting before the preset"
+        sleep "$CAMERA_RESTART_SETTLE_SECONDS"
+        camera_preset "$CAMERA_PRESET_PREP" || preset_rc=$?
+    fi
+
+    echo
+    echo "CAMERA_OFF_RESULT=${off_rc}"
+    echo "CAMERA_ON_RESULT=${on_rc}"
+    [[ -n "$CAMERA_PRESET_PREP" ]] && echo "PRESET_RESULT=${preset_rc}"
+
+    if [[ "$on_rc" -ne 0 ]]; then
+        result false camera-restart "Camera was powered off but did not come back online"
+        return 1
+    fi
+    if [[ "$preset_rc" -ne 0 ]]; then
+        result false camera-restart "Camera restarted and is online, but the preset could not be recalled"
+        return 2
+    fi
+    result true camera-restart "Camera restarted and is back online${CAMERA_PRESET_PREP:+ on preset $CAMERA_PRESET_PREP}"
+    return 0
 }
 
 camera_status() {
@@ -1786,6 +1835,7 @@ Commands:
 
   camera on               Power on the camera
   camera off              Power off the camera
+  camera restart          Power-cycle the camera over PoE, then recall CAMERA_PRESET_PREP
   camera status           Show camera status
   camera preset N         Move the camera to saved preset N (VISCA over IP)
 
@@ -1906,6 +1956,9 @@ case "$main_command" in
             off|stop)
                 camera_off
                 ;;
+            restart|reboot|cycle)
+                camera_restart
+                ;;
             status)
                 camera_status
                 ;;
@@ -1913,7 +1966,7 @@ case "$main_command" in
                 camera_preset "$third_arg"
                 ;;
             *)
-                echo "Usage: media camera {on|off|status|preset N}" >&2
+                echo "Usage: media camera {on|off|restart|status|preset N}" >&2
                 exit 1
                 ;;
         esac
