@@ -392,17 +392,31 @@ async function syncDrive() {
     }
   }
 
-  const unsubscribeSignage = signageDocument.onSnapshot(
-    snapshot => {
-      applySnapshot(snapshot).catch(error => {
-        console.error("Could not apply Firestore snapshot:", error);
-      });
-    },
-    error => {
-      console.error("Firestore snapshot listener stopped:", error);
-      process.exitCode = 1;
-    }
-  );
+  // The SDK retries transient errors itself but gives up for good after a
+  // long outage (e.g. DNS down). Resubscribe with backoff, otherwise Drive
+  // sync keeps the process alive while the display stops following Firestore.
+  let unsubscribeSignage = () => {};
+  let resubscribeTimer;
+  let resubscribeSeconds = 5;
+  function watchSignage() {
+    unsubscribeSignage = signageDocument.onSnapshot(
+      snapshot => {
+        resubscribeSeconds = 5;
+        applySnapshot(snapshot).catch(error => {
+          console.error("Could not apply Firestore snapshot:", error);
+        });
+      },
+      error => {
+        console.error(
+          `Firestore snapshot listener stopped; resubscribing in ${resubscribeSeconds}s:`,
+          error
+        );
+        resubscribeTimer = setTimeout(watchSignage, resubscribeSeconds * 1000);
+        resubscribeSeconds = Math.min(resubscribeSeconds * 2, 300);
+      }
+    );
+  }
+  watchSignage();
   await syncDrive();
   const syncSeconds = Math.max(30, Number((config.drive || {}).syncSeconds) || 300);
   const driveTimer = setInterval(() => {
@@ -418,6 +432,7 @@ async function syncDrive() {
 
   function shutdown() {
     clearInterval(driveTimer);
+    clearTimeout(resubscribeTimer);
     unsubscribeSignage();
     process.exit();
   }
