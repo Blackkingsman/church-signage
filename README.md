@@ -33,8 +33,8 @@ Firestore appContent/signage ──────────────┘ ─�
 
 Written elsewhere:
   appContent/signage.mode                 ← Telegram assistant (n8n) or Firebase console
-  appContent/signage.live* (6 fields)     ← awesome_church backend, from the newest sermon
-  appContent/signage.liveUrl, music, wall ← humans, in the Firebase console
+  appContent/signage.live* (incl liveUrl) ← awesome_church backend, from the newest sermon
+  appContent/signage.music, wall          ← humans, in the Firebase console
 ```
 
 - `signage_bridge.js` mirrors three Drive folders to disk every `syncSeconds`
@@ -103,7 +103,7 @@ Copy each folder's ID from its URL
 | Field | Type | Written by | Notes |
 |---|---|---|---|
 | `mode` | string | Telegram assistant, or by hand | `wall` / `photo` / `slides` / `live` |
-| `liveUrl` | string | by hand | HLS URL of the local MediaMTX server, e.g. `http://<mediamtx-host>:8888/live/index.m3u8`. YouTube links also work. Never auto-set. |
+| `liveUrl` | string | **awesome_church backend**, or by hand | The newest published sermon's YouTube link. Only written when that sermon has one, so a hand-set URL (e.g. the MediaMTX HLS feed `http://<mediamtx-host>:8888/live/index.m3u8`) stays until the next sermon with a link. |
 | `backgroundMusicUrl` | string | by hand | YouTube link for the wall's background music |
 | `musicEnabled` | boolean | by hand | |
 | `musicVolume` | number | by hand | 0–100 |
@@ -115,7 +115,10 @@ Copy each folder's ID from its URL
 | `liveTitle`, `liveBody`, `liveMeta`, `liveSource`, `liveSourceSermonId`, `liveThumbnailUrl` | string | **awesome_church backend** | Mirrored from the newest published sermon. Don't edit by hand; the backend re-applies them. |
 
 Every change to this document reaches the TV within a second or two through
-the bridge's `onSnapshot` listener. No page reload.
+the bridge's `onSnapshot` listener. No page reload. If the listener dies after
+a long network outage, the bridge resubscribes on its own (5 s backoff,
+doubling up to 5 min) and logs `Firestore snapshot listener stopped;
+resubscribing`.
 
 ## 4. Running on the VM
 
