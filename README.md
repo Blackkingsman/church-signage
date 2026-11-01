@@ -120,6 +120,15 @@ a long network outage, the bridge resubscribes on its own (5 s backoff,
 doubling up to 5 min) and logs `Firestore snapshot listener stopped;
 resubscribing`.
 
+### Sound on the lobby kiosk
+
+Browsers block unmuted autoplay, so by default the live view starts muted and
+shows an "Enable sound" prompt. The lobby Mac runs Chrome in kiosk mode with
+`--autoplay-policy=no-user-gesture-required` and opens
+`http://<vm>:8000/?sound=kiosk`, which starts the stream with sound, never
+falls back to muted, and hides the prompt. `?sound=auto` tries sound but falls
+back to muted for an ordinary browser.
+
 ## 4. Running on the VM
 
 The VM is Debian. Requirements: `node`, `npm`, `python3`, `curl`.
