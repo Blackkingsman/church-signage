@@ -1847,7 +1847,7 @@
       if (!value) return "";
       try {
         const url = new URL(value);
-        const autoSound = options.autoSound ?? new URLSearchParams(window.location.search).get("sound") === "auto";
+        const autoSound = options.autoSound ?? ["auto", "kiosk"].includes(new URLSearchParams(window.location.search).get("sound"));
         const params = new URLSearchParams({
           autoplay: "1",
           mute: autoSound ? "0" : "1",
@@ -1968,7 +1968,13 @@
     }
 
     function renderLive() {
-      const autoSound = new URLSearchParams(window.location.search).get("sound") === "auto";
+      // ?sound=kiosk: the lobby kiosk runs Chrome with
+      // --autoplay-policy=no-user-gesture-required, so start with sound, never
+      // fall back to muted, and skip the tap prompt. ?sound=auto tries sound
+      // but falls back to muted for browsers that block it.
+      const soundParam = new URLSearchParams(window.location.search).get("sound");
+      const kioskSound = soundParam === "kiosk";
+      const autoSound = soundParam === "auto" || kioskSound;
       const rawUrl = liveContent.embedUrl || "";
       const hls = isHlsUrl(rawUrl);
       const embedUrl = hls ? rawUrl : youtubeEmbedUrl(rawUrl);
@@ -1987,7 +1993,7 @@
       }
       renderedLiveKey = renderKey;
 
-      const soundPromptMarkup = `
+      const soundPromptMarkup = kioskSound ? "" : `
         <button class="sound-prompt" type="button" id="soundPrompt" aria-label="Enable stream sound">
           <span class="sound-icon" aria-hidden="true">&#9658;</span>
           <span class="sound-text">
@@ -2055,7 +2061,7 @@
           liveFrame.addEventListener("load", () => {
             if (autoSound) {
               [200, 650, 1200, 2200].forEach(delay => setTimeout(startWithSound, delay));
-              [3600, 5600, 7800].forEach(delay => setTimeout(startMuted, delay));
+              [3600, 5600, 7800].forEach(delay => setTimeout(kioskSound ? startWithSound : startMuted, delay));
               setTimeout(() => soundPrompt?.classList.add("visible"), 2800);
             } else {
               [200, 650, 1200, 2200, 3600, 5600].forEach(delay => setTimeout(startMuted, delay));
