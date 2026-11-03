@@ -6,8 +6,8 @@ Real hostnames and addresses live only in `/etc/awesomechurch-media.env` on
 the VM; the values below are placeholders.
 
 ```
-media up|sleep|down|status         camera + media PC + NDI (unchanged)
-media check media                  read-only: camera, media PC, NDI, Mac Mini, OBS, OBS audio
+media up|sleep|down|status         camera power (up also recalls the prep preset)
+media check media                  read-only: camera, Mac Mini, OBS, OBS audio
 media check all                    check media + signage + lobby stream server + VM + website uptime
 media stream prep                  up + camera preset + wake Mac Mini + open OBS + verify sources
 media stream start|stop|status     OBS Start/Stop Streaming, readiness summary
@@ -21,7 +21,8 @@ media camera restart               PoE power-cycle (off, on, preset) for a froze
 
 ## Topology
 
-- **Media PC (Windows)** — slides/music → NDI. Woken with Wake-on-LAN, driven over SSH.
+- **Mac Studio** — presentation Mac; sends slides/music to OBS over NDI. Not controlled by `media` yet.
+  (The Windows media PC it replaced is retired; `media pc|ndi|ssh` now just say so.)
 - **Camera (OBSBOT Tail Air 2)** — PoE powered (switch API), NDI out, VISCA over IP for presets.
 - **Mac Mini** — OBS ingests both NDI sources + X32 audio over USB-C, streams to YouTube + MediaMTX.
 
@@ -34,7 +35,7 @@ media camera restart               PoE power-cycle (off, on, preset) for a froze
    Test: `ssh <macuser>@<mac-ip> 'open -a OBS'`
 3. **System Settings → Energy → Wake for network access: On**, and note the Mac's Ethernet
    MAC address (`ifconfig en0 | grep ether`) for Wake-on-LAN. Simplest is to just leave the
-   Mac awake; sleep + WoL works but is less predictable than the Windows PC.
+   Mac awake; sleep + WoL works but is less predictable.
 4. **OBS → Tools → WebSocket Server Settings** → Enable WebSocket server, port `4455`,
    Enable Authentication, set a password. (Built into OBS 28+; no plugin needed.)
 5. Make sure OBS **Settings → Stream** points at the persistent YouTube stream key
@@ -158,7 +159,7 @@ Then: `sudo vm/install.sh` and `media stream status`.
 ## Output conventions
 
 Every command prints human-readable progress, `KEY=VALUE` lines the n8n workflows
-parse (`CAMERA_RESULT`, `PC_RESULT`, `NDI_RESULT`, `MAC_RESULT`, `OBS_RESULT`,
+parse (`CAMERA_RESULT`, `MAC_RESULT`, `OBS_RESULT`,
 `OBS_STREAMING`, …) and finally one JSON line:
 `{"success":true|false,"partial_success":bool,"action":"…","message":"…"}`.
 Exit code 0 = success, 2 = partial, 1 = failure.
@@ -166,8 +167,8 @@ Exit code 0 = success, 2 = partial, 1 = failure.
 ### Health checks (`media check media`, `media check all`)
 
 Both are read-only: nothing is woken, launched or restarted (the signage
-check runs with `SIGNAGE_AUTOSTART=0`). `check media` walks camera → media PC
-→ NDI → Mac Mini → OBS → OBS audio and prints one `*_RESULT=` line per device.
+check runs with `SIGNAGE_AUTOSTART=0`). `check media` walks camera → Mac Mini
+→ OBS → OBS audio and prints one `*_RESULT=` line per device.
 `check all` wraps that in `##### MEDIA #####` and adds `SIGNAGE`, `LOBBY
 STREAM SERVER`, `VM` (uptime, load, disk %, memory %, Tailscale state) and
 `WEBSITES` (`WEBSITE=<url> HTTP=<code> MS=<latency>`) sections, then
