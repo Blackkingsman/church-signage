@@ -1663,7 +1663,13 @@
             ? welcome.names
               .filter(item => item && typeof item.firstName === "string" && item.firstName
                 && /^\d{4}-\d{2}-\d{2}$/.test(item.visitDate || ""))
-              .map(item => ({ firstName: item.firstName, visitDate: item.visitDate }))
+              .map(item => ({
+                firstName: item.firstName,
+                visitDate: item.visitDate,
+                partySize: Number(item.partySize) > 0 ? Number(item.partySize) : 1,
+                // Present only for a party of two or more (the bridge decides).
+                family: typeof item.family === "string" && item.family ? item.family : ""
+              }))
             : []
         };
 

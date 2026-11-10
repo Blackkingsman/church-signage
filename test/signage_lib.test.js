@@ -14,20 +14,29 @@ test("isSlideActive honours enabled and window", () => {
   assert.equal(lib.isSlideActive({ enabled: true, startAt: "2026-11-01T00:00:00Z", endAt: "2026-11-30T00:00:00Z" }, NOW), true);
 });
 
-test("sanitizeWelcomeNames keeps only firstName and visitDate", () => {
+test("sanitizeWelcomeNames keeps only firstName, visitDate, partySize and a family name for parties", () => {
   const out = lib.sanitizeWelcomeNames([
     { firstName: " Zoe ", lastName: "Kim", email: "a@b.c", phone: "1", notes: "x", id: "9", visitDate: new Date("2026-11-15T00:00:00+09:00") },
     { firstName: "<b>Amy</b>", visitDate: { seconds: Date.parse("2026-11-15T00:00:00+09:00") / 1000 } },
     { firstName: "", visitDate: new Date() },
     { firstName: "Bad", visitDate: "nope" },
-    { firstName: "Ben", visitDate: new Date("2026-11-08T00:00:00+09:00") }
+    { firstName: "Ben", visitDate: new Date("2026-11-08T00:00:00+09:00") },
+    { firstName: "Min", lastName: " <i>Lee</i> ", partySize: 4, visitDate: new Date("2026-11-15T00:00:00+09:00") },
+    { firstName: "Sol", lastName: "", partySize: 3, visitDate: new Date("2026-11-15T00:00:00+09:00") }
   ]);
   assert.deepEqual(out, [
-    { firstName: "Ben", visitDate: "2026-11-08" },
-    { firstName: "Amy", visitDate: "2026-11-15" },
-    { firstName: "Zoe", visitDate: "2026-11-15" }
+    { firstName: "Ben", visitDate: "2026-11-08", partySize: 1 },
+    { firstName: "Amy", visitDate: "2026-11-15", partySize: 1 },
+    { firstName: "Min", visitDate: "2026-11-15", partySize: 4, family: "Lee" },
+    { firstName: "Sol", visitDate: "2026-11-15", partySize: 3 },
+    { firstName: "Zoe", visitDate: "2026-11-15", partySize: 1 }
   ]);
-  for (const item of out) assert.deepEqual(Object.keys(item).sort(), ["firstName", "visitDate"]);
+  // A single visitor never carries a last name; a party does, only as `family`.
+  for (const item of out) {
+    assert.ok(!("lastName" in item));
+    assert.deepEqual(Object.keys(item).sort(),
+      item.family ? ["family", "firstName", "partySize", "visitDate"] : ["firstName", "partySize", "visitDate"]);
+  }
 });
 
 test("welcomeRange covers today to now+7d, starting today in KST", () => {
