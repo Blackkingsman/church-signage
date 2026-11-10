@@ -587,6 +587,68 @@
       box-shadow: none;
     }
 
+    /* Welcome column: same two-column split as the live view. Only present
+       while the view has .has-welcome; otherwise the aside is hidden and the
+       slides run full width exactly as before. */
+    .slide-view.has-welcome,
+    .photo-view.has-welcome {
+      grid-template-columns: minmax(0, 1fr) minmax(300px, .28fr);
+      place-items: stretch;
+    }
+
+    .welcome {
+      display: none;
+    }
+
+    .has-welcome > .welcome {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: clamp(10px, 1.4vh, 22px);
+      height: 100vh;
+      overflow: hidden;
+      padding: clamp(24px, 3vw, 56px);
+      color: #fffdf8;
+      background:
+        radial-gradient(circle at 80% 12%, rgba(239,200,111,.16), transparent 34%),
+        #171412;
+    }
+
+    .welcome-heading {
+      margin: 0;
+      font-size: clamp(2.2rem, 3.6vw, 4.6rem);
+      line-height: 1.05;
+      color: #efc86f;
+    }
+
+    .welcome-date {
+      margin: clamp(6px, 1vh, 16px) 0 0;
+      font-size: clamp(.95rem, 1.3vw, 1.5rem);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: rgba(255,253,248,.62);
+    }
+
+    .welcome-names {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: clamp(4px, .9vh, 14px);
+    }
+
+    .welcome-names li {
+      font-size: clamp(1.7rem, 3vw, 3.8rem);
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+    }
+
+    .welcome-more {
+      margin: 0;
+      font-size: clamp(1.1rem, 1.7vw, 2rem);
+      color: rgba(255,253,248,.7);
+    }
+
     .live-lobby {
       width: 100%;
       height: 100vh;
@@ -859,9 +921,11 @@
     </section>
     <section class="slide-view view" id="slideView" aria-label="Announcement slides">
       <div class="slide-stage" id="slideStage"></div>
+      <aside class="welcome" id="slideWelcome" aria-label="Welcome" hidden></aside>
     </section>
     <section class="photo-view view" id="photoView" aria-label="Single photo slideshow">
       <div class="photo-stage" id="photoStage"></div>
+      <aside class="welcome" id="photoWelcome" aria-label="Welcome" hidden></aside>
     </section>
     <section class="live-view view" id="liveView" aria-label="Live stream">
       <div class="live-stage" id="liveStage"></div>
@@ -964,6 +1028,8 @@
       volume: 55
     };
 
+    let slideDurationSec = 9;
+    let welcomeContent = { enabled: true, heading: "Welcome!", names: [] };
     let slideDeck = [
       {
         caption: "Welcome slide",
@@ -1395,8 +1461,58 @@
         caption: item.caption || item.title || `Slide ${index + 1}`,
         image: item.image || item.url || "",
         driveId: item.driveId || "",
-        artIndex: Number.isFinite(item.artIndex) ? item.artIndex : index
+        artIndex: Number.isFinite(item.artIndex) ? item.artIndex : index,
+        durationSec: Number(item.durationSec) > 0 ? Number(item.durationSec) : 0
       };
+    }
+
+    // Seconds each announcement slide stays up: its own durationSec, else the
+    // global slideDurationSec from content.json, else 9.
+    function slideDurationMs(slide) {
+      const seconds = (slide && slide.durationSec) || slideDurationSec || 9;
+      return Math.round(seconds * 1000);
+    }
+
+    const WELCOME_MAX_NAMES = 12;
+
+    function welcomeDateLabel(isoDate) {
+      const [year, month, day] = isoDate.split("-").map(Number);
+      return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+        weekday: "long", month: "short", day: "numeric"
+      });
+    }
+
+    function welcomeMarkup() {
+      const names = welcomeContent.names;
+      const shown = names.slice(0, WELCOME_MAX_NAMES);
+      const extra = names.length - shown.length;
+      const dates = [...new Set(shown.map(item => item.visitDate))];
+      const groups = dates.map(date => ({ date, items: shown.filter(item => item.visitDate === date) }));
+      const multiple = new Set(names.map(item => item.visitDate)).size > 1;
+      return `
+        <h2 class="welcome-heading">${escapeHtml(welcomeContent.heading)}</h2>
+        ${groups.map(group => `
+          ${multiple ? `<p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>` : ""}
+          <ul class="welcome-names">${group.items.map(item => `<li>${escapeHtml(item.firstName)}</li>`).join("")}</ul>
+        `).join("")}
+        ${extra > 0 ? `<p class="welcome-more">+${extra} more</p>` : ""}
+      `;
+    }
+
+    // Shows or hides the welcome column on the slides and photo views. The
+    // markup is rebuilt only when the list actually changes.
+    let welcomeSignature = "";
+    function renderWelcome() {
+      const visible = welcomeContent.enabled && welcomeContent.names.length > 0;
+      const signature = visible ? JSON.stringify(welcomeContent) : "";
+      [["slideView", "slideWelcome"], ["photoView", "photoWelcome"]].forEach(([viewId, asideId]) => {
+        const view = document.getElementById(viewId);
+        const aside = document.getElementById(asideId);
+        view.classList.toggle("has-welcome", visible);
+        aside.hidden = !visible;
+        if (signature !== welcomeSignature) aside.innerHTML = visible ? welcomeMarkup() : "";
+      });
+      welcomeSignature = signature;
     }
 
     async function loadContentManifest() {
@@ -1430,6 +1546,19 @@
           slideIndex = 0;
         }
 
+        slideDurationSec = Number(content.slideDurationSec) > 0 ? Number(content.slideDurationSec) : 9;
+        const welcome = content.welcome && typeof content.welcome === "object" ? content.welcome : {};
+        welcomeContent = {
+          enabled: welcome.enabled !== false,
+          heading: typeof welcome.heading === "string" && welcome.heading ? welcome.heading : "Welcome!",
+          names: Array.isArray(welcome.names)
+            ? welcome.names
+              .filter(item => item && typeof item.firstName === "string" && item.firstName
+                && /^\d{4}-\d{2}-\d{2}$/.test(item.visitDate || ""))
+              .map(item => ({ firstName: item.firstName, visitDate: item.visitDate }))
+            : []
+        };
+
         if (content.wall && typeof content.wall === "object") {
           wallContent = {
             eyebrow: content.wall.eyebrow || wallContent.eyebrow,
@@ -1460,10 +1589,12 @@
           renderBackgroundMusic();
         }
 
+        renderWelcome();
         rebuildWall();
         renderSlide();
         renderSinglePhoto();
         renderLive();
+        if (activeMode === "slides") restartModeTimer();
         if (activeMode === "wall") {
           status.textContent = `${elements.length} on wall \u00b7 ${photoLibrary.length} loaded`;
         }
@@ -1810,7 +1941,7 @@
       replaceSlideshowScreen(slideStage, `
         <article class="slide-screen" aria-label="${escapeHtml(slide.caption || `Slide ${slideIndex + 1}`)}">
           ${photoFrameMarkup(photo, 3000 + slideIndex)}
-          <div class="slide-countdown"></div>
+          <div class="slide-countdown" style="--slide-duration: ${slideDurationMs(slide)}ms"></div>
         </article>
       `, token, () => slideRenderToken, "transition-slide-right");
       status.textContent = `Slide ${slideIndex + 1} of ${slideDeck.length}`;
@@ -2099,6 +2230,7 @@
     }
 
     function clearModeTimer() {
+      clearTimeout(modeTimer);
       clearInterval(modeTimer);
       modeTimer = null;
     }
@@ -2106,7 +2238,10 @@
     function restartModeTimer() {
       clearModeTimer();
       if (activeMode === "slides") {
-        modeTimer = setInterval(() => advanceSlide(1), 9000);
+        modeTimer = setTimeout(() => {
+          advanceSlide(1);
+          restartModeTimer();
+        }, slideDurationMs(slideDeck[slideIndex % slideDeck.length]));
       } else if (activeMode === "photo") {
         modeTimer = setInterval(() => advancePhoto(1), 7000);
       }
@@ -2295,6 +2430,7 @@
     window.addEventListener("hashchange", () => setMode(modeFromLocation()));
 
     resetPhotoDrawBag();
+    renderWelcome();
     rebuildWall();
     renderSlide();
     renderSinglePhoto();
