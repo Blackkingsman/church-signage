@@ -4,6 +4,8 @@ const path = require("path");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 8000);
+// HOST defaults to all interfaces so the lobby Air can reach this over the LAN.
+// If this ever runs on the same machine as the browser, set HOST=127.0.0.1.
 const host = process.env.HOST || "0.0.0.0";
 const displayHost = process.env.DISPLAY_HOST || "localhost";
 
@@ -41,7 +43,15 @@ function fileVersion(fileName) {
 }
 
 const server = http.createServer((req, res) => {
-  const requestPath = decodeURIComponent(new URL(req.url, `http://${host}`).pathname);
+  let requestPath;
+  try {
+    requestPath = decodeURIComponent(new URL(req.url, `http://${host}`).pathname);
+  } catch (error) {
+    // Malformed %-escapes (or an unparsable URL) must not crash the process.
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Bad request");
+    return;
+  }
 
   if (requestPath === "/version.json") {
     const version = {
