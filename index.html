@@ -708,8 +708,12 @@
 
     .welcome-footer {
       margin: clamp(6px, 1.4vh, 20px) 0 0;
-      font-size: clamp(.95rem, 1.25vw, 1.5rem);
+      max-width: 100%;
+      font-size: clamp(.9rem, 1.1vw, 1.35rem);
       font-style: italic;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       color: rgba(255,253,248,.55);
     }
 
