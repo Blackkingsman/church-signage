@@ -601,37 +601,71 @@
     }
 
     .has-welcome > .welcome {
+      position: relative;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      gap: clamp(10px, 1.4vh, 22px);
+      align-items: center;
+      text-align: center;
+      gap: clamp(8px, 1.2vh, 18px);
       height: 100vh;
       overflow: hidden;
-      padding: clamp(24px, 3vw, 56px);
+      padding: clamp(28px, 3.2vw, 64px) clamp(20px, 2.4vw, 48px);
       color: #fffdf8;
-      background:
-        radial-gradient(circle at 80% 12%, rgba(239,200,111,.16), transparent 34%),
-        #171412;
+      background: linear-gradient(180deg, #1c1815 0%, #121010 100%);
+      border-left: 1px solid rgba(239,200,111,.22);
+      box-shadow: inset 18px 0 40px -28px rgba(0,0,0,.9);
+    }
+
+    /* Soft gold glow at the top of the panel; gives the column a "lit" feel
+       without competing with the slide next to it. */
+    .has-welcome > .welcome::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(239,200,111,.18), transparent 55%);
+      pointer-events: none;
+    }
+
+    .welcome > * { position: relative; }
+
+    .welcome-eyebrow {
+      margin: 0;
+      font-size: clamp(.8rem, 1.05vw, 1.3rem);
+      letter-spacing: .26em;
+      text-transform: uppercase;
+      color: rgba(239,200,111,.85);
     }
 
     .welcome-heading {
       margin: 0;
-      font-size: clamp(2.2rem, 3.6vw, 4.6rem);
-      line-height: 1.05;
+      font-size: clamp(2.4rem, 3.9vw, 5rem);
+      line-height: 1.02;
+      font-weight: 800;
+      letter-spacing: -.01em;
       color: #efc86f;
     }
 
     .welcome-heading-ko {
-      font-size: clamp(1.8rem, 3vw, 3.8rem);
-      margin-top: calc(-1 * clamp(2px, .5vh, 8px));
+      margin-top: .1em;
+      font-size: clamp(1.5rem, 2.3vw, 3rem);
+      font-weight: 600;
+      color: rgba(255,253,248,.85);
+    }
+
+    .welcome-rule {
+      width: clamp(40px, 4vw, 72px);
+      height: 2px;
+      margin: clamp(6px, 1vh, 14px) auto;
+      background: linear-gradient(90deg, transparent, #efc86f, transparent);
     }
 
     .welcome-date {
-      margin: clamp(6px, 1vh, 16px) 0 0;
-      font-size: clamp(.95rem, 1.3vw, 1.5rem);
-      letter-spacing: .08em;
+      margin: 0;
+      font-size: clamp(.9rem, 1.15vw, 1.4rem);
+      letter-spacing: .14em;
       text-transform: uppercase;
-      color: rgba(255,253,248,.62);
+      color: rgba(255,253,248,.6);
     }
 
     .welcome-names {
@@ -639,19 +673,49 @@
       padding: 0;
       list-style: none;
       display: grid;
-      gap: clamp(4px, .9vh, 14px);
+      gap: clamp(8px, 1.2vh, 16px);
+      width: 100%;
+      max-width: 92%;
     }
 
     .welcome-names li {
-      font-size: clamp(1.7rem, 3vw, 3.8rem);
-      line-height: 1.12;
+      font-size: clamp(1.6rem, 2.9vw, 3.6rem);
+      line-height: 1.1;
+      padding: clamp(8px, 1.1vh, 16px) clamp(12px, 1.2vw, 22px);
+      border-radius: 18px;
+      background: rgba(255,253,248,.06);
+      border: 1px solid rgba(255,253,248,.1);
       overflow-wrap: anywhere;
+      animation: welcome-in .7s ease both;
+    }
+
+    /* Many names: two columns, smaller cards, so nobody falls off the screen. */
+    .welcome-names.is-dense {
+      grid-template-columns: 1fr 1fr;
+      gap: clamp(6px, .9vh, 12px) clamp(8px, .8vw, 16px);
+    }
+
+    .welcome-names.is-dense li {
+      font-size: clamp(1.2rem, 2vw, 2.4rem);
+      padding: clamp(6px, .9vh, 12px) clamp(10px, 1vw, 16px);
     }
 
     .welcome-more {
       margin: 0;
-      font-size: clamp(1.1rem, 1.7vw, 2rem);
-      color: rgba(255,253,248,.7);
+      font-size: clamp(1rem, 1.5vw, 1.8rem);
+      color: rgba(255,253,248,.6);
+    }
+
+    .welcome-footer {
+      margin: clamp(6px, 1.4vh, 20px) 0 0;
+      font-size: clamp(.95rem, 1.25vw, 1.5rem);
+      font-style: italic;
+      color: rgba(255,253,248,.55);
+    }
+
+    @keyframes welcome-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: none; }
     }
 
     .live-lobby {
@@ -1494,14 +1558,21 @@
       const dates = [...new Set(shown.map(item => item.visitDate))];
       const groups = dates.map(date => ({ date, items: shown.filter(item => item.visitDate === date) }));
       const multiple = new Set(names.map(item => item.visitDate)).size > 1;
+      const dense = shown.length > 6;
+      let index = 0;
+      const nameItem = item =>
+        `<li style="animation-delay:${Math.min(index++, 11) * 90}ms">${escapeHtml(item.firstName)}</li>`;
       return `
+        <p class="welcome-eyebrow">${multiple ? "Coming up" : "This Sunday"}</p>
         ${welcomeContent.heading.en ? `<h2 class="welcome-heading">${escapeHtml(welcomeContent.heading.en)}</h2>` : ""}
         ${welcomeContent.heading.ko ? `<h3 class="welcome-heading welcome-heading-ko">${escapeHtml(welcomeContent.heading.ko)}</h3>` : ""}
+        <div class="welcome-rule" aria-hidden="true"></div>
         ${groups.map(group => `
-          ${multiple ? `<p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>` : ""}
-          <ul class="welcome-names">${group.items.map(item => `<li>${escapeHtml(item.firstName)}</li>`).join("")}</ul>
+          <p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>
+          <ul class="welcome-names${dense ? " is-dense" : ""}">${group.items.map(nameItem).join("")}</ul>
         `).join("")}
         ${extra > 0 ? `<p class="welcome-more">+${extra} more</p>` : ""}
+        <p class="welcome-footer">We're glad you're here · 반가워요</p>
       `;
     }
 
