@@ -6,11 +6,12 @@
   "scripts": {
     "start": "node server.js",
     "bridge": "node signage_bridge.js",
-    "check": "node --check server.js && node --check signage_bridge.js && node --check lib/signage_lib.js",
+    "check": "node --check server.js && node --check signage_bridge.js && node --check lib/signage_lib.js && node --check vm/obs_live_watcher.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",
-    "googleapis": "^156.0.0"
+    "googleapis": "^156.0.0",
+    "ws": "^8.22.2"
   }
 }

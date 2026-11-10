@@ -1296,6 +1296,8 @@ Commands:
   obs audio               Is OBS receiving sound? Peak level on OBS_AUDIO_INPUTS over a few seconds
   obs audio-heal          Restart coreaudiod + OBS, then re-check audio (macOS USB-audio bug)
 
+  live status             Last report sent by the obs-live-watcher service
+
   help                    Show this help message
 
 Examples:
@@ -1376,6 +1378,25 @@ case "$main_command" in
                 ;;
             *)
                 echo "Usage: media stream {prep|start|stop|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    live)
+        case "$sub_command" in
+            status|"")
+                LIVE_STATE_FILE="${OBS_WATCHER_STATE_FILE:-/run/obs-live-watcher/last.json}"
+                if [[ -r "$LIVE_STATE_FILE" ]]; then
+                    echo "(file modified: $(date -r "$LIVE_STATE_FILE" '+%Y-%m-%d %H:%M:%S'); now: $(date '+%Y-%m-%d %H:%M:%S'))"
+                    cat "$LIVE_STATE_FILE"
+                else
+                    echo "No report yet ($LIVE_STATE_FILE missing). Check: systemctl status obs-live-watcher" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "Usage: media live status" >&2
                 exit 1
                 ;;
         esac

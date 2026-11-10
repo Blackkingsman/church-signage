@@ -69,6 +69,8 @@ OBS_AUDIO_SECONDS=6                      # how long the audio check listens
 PHOTOWALL_DIR=/home/awesomechurch/photowall   # signage checkout; "media check all" runs its check_*.sh
 WEBSITE_URLS="https://awesomechurch.kr https://api.awesomechurch.kr"   # probed by "media check all"; blank disables
 TAILSCALE_PEER=100.x.y.z                # Tailscale IP of the home Pi; "media check all" reports direct vs relayed
+INTERNAL_API_TOKEN=...                   # backend X-Internal-Token for the OBS live watcher (get from the owner; never commit)
+# BACKEND_URL=https://api.awesomechurchkorea.com   # optional, this is the default
 MEDIA_LOG_FILE=/home/awesomechurch/awesomechurch-media.log   # every `media` run is appended here (default); "" disables
 ```
 

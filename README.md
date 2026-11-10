@@ -304,6 +304,35 @@ camera presets over VISCA, and chains all of that into `media stream prep`,
 call it over SSH. Setup, env file, and output conventions:
 [vm/README.md](vm/README.md).
 
+### OBS live watcher
+
+`vm/obs_live_watcher.js` is a small systemd service (`obs-live-watcher`, runs as
+root like the `media` CLI) that connects to OBS over obs-websocket v5 using the
+same `OBS_WS_HOST` (default `MAC_MINI_IP`), `OBS_WS_PORT`, `OBS_WS_PASSWORD` as
+`media`, and POSTs the stream state to
+`$BACKEND_URL/api/internal/stream-state` (header `X-Internal-Token`) every 15 s
+and immediately when OBS starts or stops streaming. If OBS is unreachable it
+keeps reporting `streaming:false, obsConnected:false` so the backend can tell
+"OBS closed" from "watcher silent". Payload:
+`{streaming, source:"obs", at, obsConnected, detail}`.
+
+Add to `/etc/awesomechurch-media.env` (never commit the value):
+
+```
+INTERNAL_API_TOKEN=<token from the owner>
+# BACKEND_URL=https://api.awesomechurchkorea.com   # default
+```
+
+Install/update with `sudo vm/install.sh` (copies the script, installs `ws` into
+`/opt/awesomechurch-media`, enables and restarts the unit; needs Node 20).
+Check it with `systemctl status obs-live-watcher`, `journalctl -u obs-live-watcher -n 50`,
+and `media live status` (last report, from `/run/obs-live-watcher/last.json`).
+
+Backend rule: the stream goes live when OBS is streaming and a sermon is
+scheduled; it goes off only after 90 minutes have passed and OBS has been not
+streaming for 5 minutes; if the watcher goes silent the backend falls back to
+the time-based schedule.
+
 ## Troubleshooting
 
 | Symptom | Check |
