@@ -700,6 +700,19 @@
       padding: clamp(6px, .9vh, 12px) clamp(10px, 1vw, 16px);
     }
 
+    /* Families get a warmer card; "The" and "Family" sit quieter than the name. */
+    .welcome-names li.is-family {
+      background: rgba(239,200,111,.1);
+      border-color: rgba(239,200,111,.28);
+    }
+
+    .welcome-family {
+      font-size: .62em;
+      font-weight: 500;
+      letter-spacing: .04em;
+      color: rgba(255,253,248,.7);
+    }
+
     .welcome-more {
       margin: 0;
       font-size: clamp(1rem, 1.5vw, 1.8rem);
@@ -1564,8 +1577,17 @@
       const multiple = new Set(names.map(item => item.visitDate)).size > 1;
       const dense = shown.length > 6;
       let index = 0;
+      // A party of two or more with a family name is greeted as a family:
+      // "The Kim Family", or "김 가족" when the name is written in Hangul.
+      const label = item => {
+        if (!item.family) return escapeHtml(item.firstName);
+        const hangul = /[ᄀ-ᇿ㄰-㆏가-힯]/.test(item.family);
+        return hangul
+          ? `${escapeHtml(item.family)} <span class="welcome-family">가족</span>`
+          : `<span class="welcome-family">The</span> ${escapeHtml(item.family)} <span class="welcome-family">Family</span>`;
+      };
       const nameItem = item =>
-        `<li style="animation-delay:${Math.min(index++, 11) * 90}ms">${escapeHtml(item.firstName)}</li>`;
+        `<li${item.family ? ' class="is-family"' : ""} style="animation-delay:${Math.min(index++, 11) * 90}ms">${label(item)}</li>`;
       return `
         <p class="welcome-eyebrow">${multiple ? "Coming up" : "This Sunday"}</p>
         ${welcomeContent.heading.en ? `<h2 class="welcome-heading">${escapeHtml(welcomeContent.heading.en)}</h2>` : ""}

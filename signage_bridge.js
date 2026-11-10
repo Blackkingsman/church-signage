@@ -607,9 +607,11 @@ async function syncDrive() {
   const syncAllFromBackend = () => Promise.all(backendLists.map(list =>
     syncListFromBackend(list).catch(error => console.error(`Backend ${list.kind} sync failed:`, error))));
 
-  // First names of expected visitors for the next 7 days (KST). Only
-  // firstName and visitDate are ever copied out of the card documents. On a
-  // Firestore error the previous list stays in place.
+  // Expected visitors for the next 7 days (KST). Only firstName, lastName,
+  // partySize and visitDate are read from the card documents, and
+  // sanitizeWelcomeNames keeps the last name only for a party of two or more
+  // (shown as "The <name> Family"). On a Firestore error the previous list
+  // stays in place.
   async function refreshWelcome() {
     try {
       const { startMs, endMs } = welcomeRange(Date.now());
@@ -621,7 +623,12 @@ async function syncDrive() {
         .get();
       const next = sanitizeWelcomeNames(snapshot.docs.map(doc => {
         const data = doc.data();
-        return { firstName: data.firstName, visitDate: data.visitDate };
+        return {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          partySize: data.partySize,
+          visitDate: data.visitDate
+        };
       }));
       if (JSON.stringify(next) !== JSON.stringify(welcomeNames)) {
         welcomeNames = next;
