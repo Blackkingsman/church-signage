@@ -621,6 +621,11 @@
       color: #efc86f;
     }
 
+    .welcome-heading-ko {
+      font-size: clamp(1.8rem, 3vw, 3.8rem);
+      margin-top: calc(-1 * clamp(2px, .5vh, 8px));
+    }
+
     .welcome-date {
       margin: clamp(6px, 1vh, 16px) 0 0;
       font-size: clamp(.95rem, 1.3vw, 1.5rem);
@@ -1029,7 +1034,7 @@
     };
 
     let slideDurationSec = 9;
-    let welcomeContent = { enabled: true, heading: "Welcome!", names: [] };
+    let welcomeContent = { enabled: true, heading: { en: "Welcome!", ko: "환영합니다" }, names: [] };
     let slideDeck = [
       {
         caption: "Welcome slide",
@@ -1490,7 +1495,8 @@
       const groups = dates.map(date => ({ date, items: shown.filter(item => item.visitDate === date) }));
       const multiple = new Set(names.map(item => item.visitDate)).size > 1;
       return `
-        <h2 class="welcome-heading">${escapeHtml(welcomeContent.heading)}</h2>
+        ${welcomeContent.heading.en ? `<h2 class="welcome-heading">${escapeHtml(welcomeContent.heading.en)}</h2>` : ""}
+        ${welcomeContent.heading.ko ? `<h3 class="welcome-heading welcome-heading-ko">${escapeHtml(welcomeContent.heading.ko)}</h3>` : ""}
         ${groups.map(group => `
           ${multiple ? `<p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>` : ""}
           <ul class="welcome-names">${group.items.map(item => `<li>${escapeHtml(item.firstName)}</li>`).join("")}</ul>
@@ -1550,7 +1556,12 @@
         const welcome = content.welcome && typeof content.welcome === "object" ? content.welcome : {};
         welcomeContent = {
           enabled: welcome.enabled !== false,
-          heading: typeof welcome.heading === "string" && welcome.heading ? welcome.heading : "Welcome!",
+          heading: (() => {
+            const raw = welcome.heading;
+            const en = typeof raw === "string" ? raw : (raw && typeof raw.en === "string" ? raw.en : "");
+            const ko = raw && typeof raw === "object" && typeof raw.ko === "string" ? raw.ko : "";
+            return en || ko ? { en, ko } : { en: "Welcome!", ko: "환영합니다" };
+          })(),
           names: Array.isArray(welcome.names)
             ? welcome.names
               .filter(item => item && typeof item.firstName === "string" && item.firstName

@@ -12,6 +12,7 @@ const {
   clampDuration,
   isSlideActive,
   keyHash,
+  normalizeWelcomeHeading,
   pickDurationSec,
   sanitizeWelcomeNames,
   welcomeRange
@@ -344,9 +345,7 @@ function normalizeRemoteState(config, data = {}) {
     slideDurationSec: clampDuration(data.slideDurationSec) ?? 9,
     welcomeColumnEnabled:
       typeof data.welcomeColumnEnabled === "boolean" ? data.welcomeColumnEnabled : true,
-    welcomeHeading: typeof data.welcomeHeading === "string" && data.welcomeHeading.trim()
-      ? data.welcomeHeading.trim().slice(0, 60)
-      : "Welcome!",
+    welcomeHeading: normalizeWelcomeHeading(data.welcomeHeading),
     liveLabel: data.liveLabel,
     liveTitle: data.liveTitle,
     liveBody: data.liveBody,

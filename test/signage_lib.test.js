@@ -53,3 +53,11 @@ test("pickDurationSec prefers per-slide, then global, then 9", () => {
   assert.equal(lib.pickDurationSec(1, 9), 3);
   assert.equal(lib.pickDurationSec(9999, 9), 300);
 });
+
+test("normalizeWelcomeHeading accepts strings and {en, ko}", () => {
+  assert.deepEqual(lib.normalizeWelcomeHeading("Hi <b>all</b>"), { en: "Hi all", ko: "" });
+  assert.deepEqual(lib.normalizeWelcomeHeading({ en: " Hello ", ko: "안녕" }), { en: "Hello", ko: "안녕" });
+  assert.deepEqual(lib.normalizeWelcomeHeading({ en: "", ko: "" }), { en: "Welcome!", ko: "환영합니다" });
+  assert.deepEqual(lib.normalizeWelcomeHeading(undefined), { en: "Welcome!", ko: "환영합니다" });
+  assert.equal(lib.normalizeWelcomeHeading({ en: "x".repeat(200) }).en.length, 60);
+});
