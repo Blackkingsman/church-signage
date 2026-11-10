@@ -29,11 +29,24 @@ if [[ ! -x "$TOOLS_DIR/venv/bin/python3" ]]; then
 fi
 "$TOOLS_DIR/venv/bin/pip" install -q --upgrade websocket-client
 
+# OBS live watcher (Node service, needs the `ws` package next to the script).
+install -m 0755 "$DIR/obs_live_watcher.js" "$TOOLS_DIR/"
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  npm install --prefix "$TOOLS_DIR" --omit=dev --no-audit --no-fund --silent ws@8
+  install -m 0644 "$DIR/obs-live-watcher.service" /etc/systemd/system/obs-live-watcher.service
+  systemctl daemon-reload
+  systemctl enable obs-live-watcher.service
+  systemctl restart obs-live-watcher.service
+  echo "obs-live-watcher: enabled and started (needs INTERNAL_API_TOKEN in /etc/awesomechurch-media.env)"
+else
+  echo "WARNING: node/npm not found; obs-live-watcher not installed (needs Node 20)" >&2
+fi
+
 bash -n "$DIR/media"
 install -m 0755 "$DIR/media" /usr/local/bin/media
 
 echo "Installed:"
 echo "  /usr/local/bin/media            ($(media help 2>/dev/null | head -n 1))"
-echo "  $TOOLS_DIR/obs_ctl.py, obsbot_preset.py"
+echo "  $TOOLS_DIR/obs_ctl.py, obsbot_preset.py, obs_live_watcher.js (service: obs-live-watcher)"
 echo
 echo "Next: add the Mac Mini / OBS values to /etc/awesomechurch-media.env, then run: media stream status"

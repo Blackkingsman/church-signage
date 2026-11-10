@@ -1,0 +1,21 @@
+[Unit]
+Description=Awesome Church OBS live watcher (reports OBS streaming state to the backend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root: /etc/awesomechurch-media.env is root-only (same as the media CLI).
+User=root
+ExecStart=/usr/bin/node /opt/awesomechurch-media/obs_live_watcher.js
+Restart=always
+RestartSec=5
+RuntimeDirectory=obs-live-watcher
+RuntimeDirectoryMode=0755
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
