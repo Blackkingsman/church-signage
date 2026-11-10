@@ -4,6 +4,9 @@
     "signageCollection": "appContent",
     "signageDocument": "signage"
   },
+  "slides": {
+    "source": "drive"
+  },
   "drive": {
     "photosFolderId": "PASTE_PHOTOS_FOLDER_ID_HERE",
     "photoSlidesFolderId": "PASTE_PHOTO_SLIDES_FOLDER_ID_HERE",

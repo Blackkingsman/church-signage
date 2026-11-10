@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "bridge": "node signage_bridge.js",
-    "check": "node --check server.js && node --check signage_bridge.js"
+    "check": "node --check server.js && node --check signage_bridge.js && node --check lib/signage_lib.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",

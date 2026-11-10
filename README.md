@@ -188,6 +188,77 @@ python3 display_control.py --status
 Android and TV browsers require a real user tap before allowing unmuted
 audio or fullscreen; nothing remote can fake that.
 
+## 7. Announcement slides from the backend (`slides.source`)
+
+Announcement slides can come from the website/admin dashboard instead of the
+Drive folder. Switch in `signage.config.json`:
+
+```json
+"slides": { "source": "drive" }
+```
+
+- `"drive"` (default): unchanged, the *Announcement Slides* Drive folder.
+- `"backend"`: the bridge stops syncing that folder and listens to
+  Firestore `appContent/signageSlides`. Each slide that is `enabled` and
+  inside its optional `startAt`/`endAt` window is downloaded (HTTPS, 30 s
+  timeout, 3 tries) into `media/slides/<id>-<hash>.<ext>`; the TV never
+  hot-links. Windows are re-checked every minute. Removed or expired slides
+  are deleted from disk. If Firestore is unreachable the last mirrored set
+  keeps playing. Photo Wall and Photo Slideshow stay on Drive in both modes.
+
+Other settings from `appContent/signage` (all optional): `slideDurationSec`
+(default 9; a slide's own `durationSec` wins), `welcomeColumnEnabled`
+(default true), `welcomeHeading` (default "Welcome!").
+
+### Welcome column
+
+Every minute (and on each settings change) the bridge reads
+`appContent/connectCards/cards` where `status == "expected"` and `visitDate`
+is from the start of today (Korea time) to now + 7 days, and writes **only**
+`welcome.names: [{firstName, visitDate}]` to `content.json`. When the column
+is enabled and the list is non-empty, the slides and photo views become two
+columns with the first names on the right (up to 12, then "+N more", with a
+date heading per Sunday if more than one is in range). Otherwise the slides
+use the full width. Needs Firestore index `cards` (collection group):
+`status ASC, visitDate ASC`.
+
+### Cutover (do on a weekday)
+
+1. Migrate the existing slides (below) or upload them in the admin dashboard.
+2. On the VM: set `"slides": { "source": "backend" }`, then
+   `git pull --ff-only && ./start_signage.sh`. `check_signage.sh` only starts
+   a bridge that is not running, so it will not pick up the new config.
+3. Watch `logs/bridge.log` for `announcement slides from backend` and a
+   `Downloading backend slide` line per slide.
+
+**Fallback:** keep the Drive folder untouched for one week. To go back, set
+`"source": "drive"` and run `./start_signage.sh` again; the next Drive sync
+replaces `media/slides`.
+
+### Migrating the existing slides
+
+On a laptop (not the VM):
+
+```bash
+scp -r awesomechurch@192.168.2.18:photowall/media/slides ./slides-export
+export API_URL=https://<backend>          # same base URL the website uses
+export ADMIN_ID_TOKEN=<Firebase ID token of an admin, valid ~1 hour>
+node scripts/migrate_slides_to_backend.mjs ./slides-export \
+  --service-account ./write-capable-service-account.json --dry-run
+# then again without --dry-run
+```
+
+Get the token by signing in to the website admin and running
+`await firebase.auth().currentUser.getIdToken()` in the browser console (or
+`getAuth().currentUser.getIdToken(true)` with the modular SDK). The service
+account must be able to **write** Firestore, so use an Admin one, not the
+read-only signage key. Files are ordered naturally by their original names
+(the `-<id>-<md5>` cache suffix is stripped), uploaded with `kind=signage`,
+and written as `enabled: true` with `title` = the original filename. Re-running
+skips titles already present.
+
+Tests: `npm test` (`node --test`).
+
 ## Media controller (`vm/`)
 
 `vm/media` is the bash controller installed to `/usr/local/bin/media` on the
