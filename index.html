@@ -700,17 +700,24 @@
       padding: clamp(6px, .9vh, 12px) clamp(10px, 1vw, 16px);
     }
 
-    /* Families get a warmer card; "The" and "Family" sit quieter than the name. */
+    /* Families get a warmer card: the family name large, "Family" as a small
+       caption underneath, so the card stays one tidy block. */
     .welcome-names li.is-family {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1;
       background: rgba(239,200,111,.1);
       border-color: rgba(239,200,111,.28);
     }
 
     .welcome-family {
-      font-size: .62em;
-      font-weight: 500;
-      letter-spacing: .04em;
-      color: rgba(255,253,248,.7);
+      margin-top: .18em;
+      font-size: .42em;
+      font-weight: 600;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: rgba(239,200,111,.85);
     }
 
     .welcome-more {
@@ -1582,9 +1589,8 @@
       const label = item => {
         if (!item.family) return escapeHtml(item.firstName);
         const hangul = /[ᄀ-ᇿ㄰-㆏가-힯]/.test(item.family);
-        return hangul
-          ? `${escapeHtml(item.family)} <span class="welcome-family">가족</span>`
-          : `<span class="welcome-family">The</span> ${escapeHtml(item.family)} <span class="welcome-family">Family</span>`;
+        return `<span class="welcome-name">${escapeHtml(item.family)}</span>`
+          + `<span class="welcome-family">${hangul ? "가족" : "Family"}</span>`;
       };
       const nameItem = item =>
         `<li${item.family ? ' class="is-family"' : ""} style="animation-delay:${Math.min(index++, 11) * 90}ms">${label(item)}</li>`;
