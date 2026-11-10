@@ -4,9 +4,18 @@ const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
 const { pipeline } = require("stream/promises");
+const { Readable } = require("stream");
 const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { google } = require("googleapis");
+const {
+  clampDuration,
+  isSlideActive,
+  keyHash,
+  pickDurationSec,
+  sanitizeWelcomeNames,
+  welcomeRange
+} = require("./lib/signage_lib");
 
 const root = __dirname;
 const configPath = path.join(root, "signage.config.json");
@@ -217,6 +226,109 @@ async function syncFolder(drive, folderId, category, previousState) {
   return { manifestItems, currentState };
 }
 
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const MAX_SLIDE_BYTES = 30 * 1024 * 1024;
+
+async function downloadUrl(url, destination, { timeoutMs = 30000, attempts = 3 } = {}) {
+  if (!/^https:\/\//i.test(url)) throw new Error(`refusing non-HTTPS slide URL: ${url}`);
+  await fsp.mkdir(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.part`;
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (type && !imageTypes.has(type) && type !== "application/octet-stream") {
+        throw new Error(`unexpected content type ${type}`);
+      }
+      if (Number(response.headers.get("content-length")) > MAX_SLIDE_BYTES) {
+        throw new Error("file too large");
+      }
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary));
+      await fsp.rename(temporary, destination);
+      return;
+    } catch (error) {
+      lastError = error;
+      await fsp.rm(temporary, { force: true });
+      if (attempt < attempts) await sleep(1000 * 2 ** (attempt - 1));
+    }
+  }
+  throw lastError;
+}
+
+function slideExtension(slide) {
+  let extension = "";
+  try {
+    extension = path.extname(new URL(slide.url).pathname).toLowerCase();
+  } catch (error) {
+    // handled below
+  }
+  if (extension === ".jpeg") extension = ".jpg";
+  return [...imageTypes.values()].includes(extension) ? extension : ".jpg";
+}
+
+// Mirror the enabled, in-window slides of appContent/signageSlides into
+// media/slides with the same signature/skip/orphan logic as syncFolder.
+// A failed download keeps the previous file when there is one; a slide with
+// nothing on disk is skipped for this round.
+async function syncBackendSlides(rawSlides, previousState, globalDurationSec, nowMs = Date.now()) {
+  const destinationDirectory = path.join(mediaRoot, "slides");
+  await fsp.mkdir(destinationDirectory, { recursive: true });
+
+  const active = rawSlides.filter(slide => (
+    slide && typeof slide.id === "string" && slide.id
+    && typeof slide.url === "string" && slide.url
+    && isSlideActive(slide, nowMs)
+  ));
+  const currentState = {};
+  const manifestItems = [];
+  const keepFiles = new Set();
+  const seenIds = new Set();
+
+  for (const slide of active) {
+    if (seenIds.has(slide.id)) continue;
+    seenIds.add(slide.id);
+    const key = typeof slide.key === "string" && slide.key ? slide.key : slide.url;
+    const fileName = `${safeName(slide.id, "slide")}-${keyHash(key)}${slideExtension(slide)}`;
+    const destination = path.join(destinationDirectory, fileName);
+    const signature = `${key}|${slide.url}`;
+    const prior = previousState[slide.id] || {};
+
+    if (prior.signature !== signature || !fs.existsSync(destination)) {
+      console.log(`Downloading backend slide: ${slide.title || slide.id}`);
+      try {
+        await downloadUrl(slide.url, destination);
+      } catch (error) {
+        console.error(`Could not download slide ${slide.id}:`, error.message || error);
+        if (!fs.existsSync(destination)) continue;
+      }
+    }
+
+    const relativePath = path.relative(root, destination).replaceAll("\\", "/");
+    keepFiles.add(path.resolve(destination).toLowerCase());
+    currentState[slide.id] = { signature, path: relativePath };
+    const explicitDuration = clampDuration(slide.durationSec);
+    manifestItems.push({
+      caption: typeof slide.title === "string" && slide.title ? slide.title : slide.id,
+      image: encodeURI(relativePath),
+      slideId: slide.id,
+      artIndex: manifestItems.length,
+      ...(explicitDuration ? { durationSec: pickDurationSec(explicitDuration, globalDurationSec) } : {})
+    });
+  }
+
+  for (const localName of await fsp.readdir(destinationDirectory)) {
+    const localPath = path.resolve(destinationDirectory, localName);
+    if (!keepFiles.has(localPath.toLowerCase())) {
+      await fsp.rm(localPath, { force: true });
+    }
+  }
+
+  return { manifestItems, currentState };
+}
+
 function normalizeRemoteState(config, data = {}) {
   const music = config.music || {};
   return {
@@ -229,6 +341,12 @@ function normalizeRemoteState(config, data = {}) {
     musicVolume: Number.isFinite(data.musicVolume)
       ? Math.max(0, Math.min(100, data.musicVolume))
       : Number.isFinite(music.volume) ? music.volume : 55,
+    slideDurationSec: clampDuration(data.slideDurationSec) ?? 9,
+    welcomeColumnEnabled:
+      typeof data.welcomeColumnEnabled === "boolean" ? data.welcomeColumnEnabled : true,
+    welcomeHeading: typeof data.welcomeHeading === "string" && data.welcomeHeading.trim()
+      ? data.welcomeHeading.trim().slice(0, 60)
+      : "Welcome!",
     liveLabel: data.liveLabel,
     liveTitle: data.liveTitle,
     liveBody: data.liveBody,
@@ -251,7 +369,7 @@ function normalizeRemoteState(config, data = {}) {
   };
 }
 
-function buildManifest(config, photos, photoSlides, slides, remote) {
+function buildManifest(config, photos, photoSlides, slides, remote, welcomeNames = []) {
   const live = config.live || {};
   const wall = { ...(config.wall || {}) };
   if (remote.wallEyebrow) wall.eyebrow = remote.wallEyebrow;
@@ -263,6 +381,12 @@ function buildManifest(config, photos, photoSlides, slides, remote) {
     photos,
     photoSlides,
     slides,
+    slideDurationSec: remote.slideDurationSec,
+    welcome: {
+      enabled: remote.welcomeColumnEnabled,
+      heading: remote.welcomeHeading,
+      names: welcomeNames
+    },
     live: {
       embedUrl: remote.liveUrl,
       label: remote.liveLabel || live.label || "Live now",
@@ -305,6 +429,22 @@ async function main() {
   let photos = Array.isArray(existingContent.photos) ? existingContent.photos : [];
   let photoSlides = Array.isArray(existingContent.photoSlides) ? existingContent.photoSlides : [];
   let slides = Array.isArray(existingContent.slides) ? existingContent.slides : [];
+  const slidesSource = ((config.slides || {}).source || "drive") === "backend" ? "backend" : "drive";
+  if ((config.slides || {}).source && config.slides.source !== slidesSource) {
+    console.warn(`Unknown slides.source "${config.slides.source}"; using "drive".`);
+  }
+  const slidesDocument = firestore
+    .collection(firestoreConfig.signageCollection || firestoreConfig.collection || "appContent")
+    .doc(firestoreConfig.slidesDocument || "signageSlides");
+  const cardsQuery = () => firestore
+    .collection(firestoreConfig.signageCollection || firestoreConfig.collection || "appContent")
+    .doc("connectCards")
+    .collection("cards");
+  const existingWelcome = (existingContent.welcome || {}).names;
+  let welcomeNames = Array.isArray(existingWelcome) ? existingWelcome : [];
+  let backendSlideDocs = null; // raw slides[] from the last snapshot; null until one arrives
+  let backendSlidesRunning = false;
+  let backendSlidesAgain = false;
   let remote = normalizeRemoteState(config);
   let syncState = readJson(statePath, {}) || {};
   let manifestQueue = Promise.resolve();
@@ -312,7 +452,7 @@ async function main() {
 
   function queueManifestWrite() {
     manifestQueue = manifestQueue
-      .then(() => writeJsonIfChanged(contentPath, buildManifest(config, photos, photoSlides, slides, remote)))
+      .then(() => writeJsonIfChanged(contentPath, buildManifest(config, photos, photoSlides, slides, remote, welcomeNames)))
       .catch(error => console.error("Could not update content.json:", error));
     return manifestQueue;
   }
@@ -326,6 +466,7 @@ async function main() {
       photoIndex: Number.isFinite(currentControl.photoIndex) ? currentControl.photoIndex : 0
     });
     await queueManifestWrite();
+    refreshWelcome().catch(() => {});
     console.log(
       `Firestore snapshot applied: mode=${remote.mode}, `
       + `live=${remote.liveUrl ? "set" : "empty"}, `
@@ -338,8 +479,10 @@ async function syncDrive() {
     const driveConfig = config.drive || {};
     const photosConfigured = driveConfig.photosFolderId && !driveConfig.photosFolderId.includes("PASTE_");
     const photoSlidesConfigured = driveConfig.photoSlidesFolderId && !driveConfig.photoSlidesFolderId.includes("PASTE_");
-    const slidesConfigured = driveConfig.slidesFolderId && !driveConfig.slidesFolderId.includes("PASTE_");
-    if (!photosConfigured || !photoSlidesConfigured || !slidesConfigured) {
+    const slidesConfigured = slidesSource === "drive"
+      && driveConfig.slidesFolderId && !driveConfig.slidesFolderId.includes("PASTE_");
+    const slidesNeeded = slidesSource === "drive";
+    if (!photosConfigured || !photoSlidesConfigured || (slidesNeeded && !slidesConfigured)) {
       console.log("Drive sync partial: one or more folder IDs are not configured yet.");
     }
     if (!photosConfigured && !photoSlidesConfigured && !slidesConfigured) {
@@ -375,21 +518,99 @@ async function syncDrive() {
         : { manifestItems: photoSlides, currentState: syncState.photoSlides || {} };
       photos = photoResult.manifestItems;
       photoSlides = photoSlideResult.manifestItems;
-      slides = slideResult.manifestItems;
+      if (slidesSource === "drive") slides = slideResult.manifestItems;
       syncState = {
+        ...syncState,
         photos: photoResult.currentState,
         photoSlides: photoSlideResult.currentState,
-        slides: slideResult.currentState
+        ...(slidesSource === "drive" ? { slides: slideResult.currentState } : {})
       };
       await writeJsonIfChanged(statePath, syncState);
       await queueManifestWrite();
       console.log(
         `Drive sync complete: ${photos.length} wall photos, `
-        + `${photoSlides.length} photo slides, ${slides.length} announcement slides`
+        + `${photoSlides.length} photo slides, ${slides.length} announcement slides (${slidesSource})`
       );
     } finally {
       driveSyncRunning = false;
     }
+  }
+
+  // Backend slide mirror. Runs on every snapshot and every tick so startAt /
+  // endAt windows open and close without waiting for a Firestore change.
+  async function syncSlidesFromBackend() {
+    if (slidesSource !== "backend" || backendSlideDocs === null) return;
+    if (backendSlidesRunning) {
+      backendSlidesAgain = true;
+      return;
+    }
+    backendSlidesRunning = true;
+    try {
+      do {
+        backendSlidesAgain = false;
+        const result = await syncBackendSlides(
+          backendSlideDocs,
+          syncState.backendSlides || {},
+          remote.slideDurationSec
+        );
+        slides = result.manifestItems;
+        syncState = { ...syncState, backendSlides: result.currentState };
+        await writeJsonIfChanged(statePath, syncState);
+        await queueManifestWrite();
+      } while (backendSlidesAgain);
+    } finally {
+      backendSlidesRunning = false;
+    }
+  }
+
+  // First names of expected visitors for the next 7 days (KST). Only
+  // firstName and visitDate are ever copied out of the card documents. On a
+  // Firestore error the previous list stays in place.
+  async function refreshWelcome() {
+    try {
+      const { startMs, endMs } = welcomeRange(Date.now());
+      const snapshot = await cardsQuery()
+        .where("status", "==", "expected")
+        .where("visitDate", ">=", new Date(startMs))
+        .where("visitDate", "<", new Date(endMs))
+        .orderBy("visitDate")
+        .get();
+      const next = sanitizeWelcomeNames(snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { firstName: data.firstName, visitDate: data.visitDate };
+      }));
+      if (JSON.stringify(next) !== JSON.stringify(welcomeNames)) {
+        welcomeNames = next;
+        await queueManifestWrite();
+        console.log(`Welcome list updated: ${welcomeNames.length} expected`);
+      }
+    } catch (error) {
+      console.error("Welcome list refresh failed; keeping the previous list:", error.message || error);
+    }
+  }
+
+  let unsubscribeSlides = () => {};
+  let resubscribeSlidesTimer;
+  let resubscribeSlidesSeconds = 5;
+  function watchSlides() {
+    unsubscribeSlides = slidesDocument.onSnapshot(
+      snapshot => {
+        resubscribeSlidesSeconds = 5;
+        if (!snapshot.exists) return; // keep the last mirrored set
+        const list = (snapshot.data() || {}).slides;
+        if (!Array.isArray(list)) return;
+        backendSlideDocs = list;
+        syncSlidesFromBackend().catch(error => console.error("Backend slide sync failed:", error));
+      },
+      error => {
+        console.error(
+          `Slides listener stopped; resubscribing in ${resubscribeSlidesSeconds}s:`,
+          error
+        );
+        resubscribeSlidesTimer = setTimeout(watchSlides, resubscribeSlidesSeconds * 1000);
+        resubscribeSlidesSeconds = Math.min(resubscribeSlidesSeconds * 2, 300);
+      }
+    );
   }
 
   // The SDK retries transient errors itself but gives up for good after a
@@ -417,21 +638,32 @@ async function syncDrive() {
     );
   }
   watchSignage();
+  if (slidesSource === "backend") watchSlides();
   await syncDrive();
+  await refreshWelcome();
   const syncSeconds = Math.max(30, Number((config.drive || {}).syncSeconds) || 300);
   const driveTimer = setInterval(() => {
     syncDrive().catch(error => console.error("Drive sync failed; retrying later:", error));
   }, syncSeconds * 1000);
+  // Fast tick: welcome list and slide windows, at least every 60 s.
+  const tickSeconds = Math.min(60, syncSeconds);
+  const tickTimer = setInterval(() => {
+    refreshWelcome().catch(() => {});
+    syncSlidesFromBackend().catch(error => console.error("Backend slide sync failed:", error));
+  }, tickSeconds * 1000);
 
   console.log(
     `Watching Firestore `
     + `${firestoreConfig.signageCollection || firestoreConfig.collection || "appContent"}`
     + `/${firestoreConfig.signageDocument || firestoreConfig.document || "signage"}; `
-    + `syncing Drive every ${syncSeconds} seconds.`
+    + `syncing Drive every ${syncSeconds} seconds; announcement slides from ${slidesSource}.`
   );
 
   function shutdown() {
     clearInterval(driveTimer);
+    clearInterval(tickTimer);
+    clearTimeout(resubscribeSlidesTimer);
+    unsubscribeSlides();
     clearTimeout(resubscribeTimer);
     unsubscribeSignage();
     process.exit();
