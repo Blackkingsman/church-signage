@@ -1399,6 +1399,7 @@
     let modeTimer = null;
     let touchStartX = 0;
     let contentVersion = 0;
+    let pageVersion = 0;  // index.html version from version.json; a change reloads the kiosk
     let lastAppliedControl = "";
     let renderedMusicKey = "";
     let renderedLiveKey = "";
@@ -1760,6 +1761,14 @@
         const version = await response.json();
         if (!contentVersion) {
           contentVersion = version.content;
+          pageVersion = version.index;
+          return;
+        }
+
+        // A new index.html was deployed: reload once so the kiosk picks it up
+        // without anyone touching the lobby Mac. Content changes never do this.
+        if (version.index && pageVersion && version.index !== pageVersion) {
+          location.reload();
           return;
         }
 
