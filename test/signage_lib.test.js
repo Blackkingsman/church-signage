@@ -30,10 +30,10 @@ test("sanitizeWelcomeNames keeps only firstName and visitDate", () => {
   for (const item of out) assert.deepEqual(Object.keys(item).sort(), ["firstName", "visitDate"]);
 });
 
-test("welcomeRange covers today through day 7 in KST", () => {
+test("welcomeRange covers today to now+7d, starting today in KST", () => {
   const { startMs, endMs } = lib.welcomeRange(NOW);
   assert.equal(lib.formatKstDate(startMs), "2026-11-10");
-  assert.equal(lib.formatKstDate(endMs), "2026-11-18");
+  assert.equal(endMs, NOW + 7 * 24 * 60 * 60 * 1000);
 });
 
 test("natural order uses original names, not the cache suffix", () => {

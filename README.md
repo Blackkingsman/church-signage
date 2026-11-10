@@ -214,7 +214,7 @@ Other settings from `appContent/signage` (all optional): `slideDurationSec`
 
 Every minute (and on each settings change) the bridge reads
 `appContent/connectCards/cards` where `status == "expected"` and `visitDate`
-is from today to 7 days ahead (Korea time), and writes **only**
+is from the start of today (Korea time) to now + 7 days, and writes **only**
 `welcome.names: [{firstName, visitDate}]` to `content.json`. When the column
 is enabled and the list is non-empty, the slides and photo views become two
 columns with the first names on the right (up to 12, then "+N more", with a
