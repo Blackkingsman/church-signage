@@ -4,7 +4,7 @@
     "signageCollection": "appContent",
     "signageDocument": "signage"
   },
-  "slides": {
+  "media": {
     "source": "drive"
   },
   "drive": {

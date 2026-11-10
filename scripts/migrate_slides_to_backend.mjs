@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// One-off migration: upload the signage VM's current announcement slides
-// through the backend and write appContent/signageSlides.
+// One-off migration: upload one of the signage VM's media folders through the
+// backend and write the matching appContent document:
+//   --kind slides       media/slides        -> appContent/signageSlides      (targetId "slides")
+//   --kind photo-slides media/photo-slides  -> appContent/signagePhotoSlides (targetId "photo-slides")
+//   --kind photo-wall   media/photos        -> appContent/signagePhotoWall   (targetId "photo-wall")
 // Runs on a laptop, NOT on the VM. See README "Migrating the existing slides".
 
 import fs from "node:fs";
@@ -11,16 +14,24 @@ import { cert, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 const require = createRequire(import.meta.url);
-const { originalStem, sortByOriginalName } = require("../lib/signage_lib.js");
+const { originalStem, readImageSize, sortByOriginalName } = require("../lib/signage_lib.js");
+
+const KINDS = {
+  "slides": { doc: "signageSlides", targetId: "slides", cacheDir: "media/slides" },
+  "photo-slides": { doc: "signagePhotoSlides", targetId: "photo-slides", cacheDir: "media/photo-slides" },
+  "photo-wall": { doc: "signagePhotoWall", targetId: "photo-wall", cacheDir: "media/photos" }
+};
 
 const MIME = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
 
 function usage() {
-  console.error(`Usage: node scripts/migrate_slides_to_backend.mjs <slides-dir> --service-account <key.json> [--dry-run]
+  console.error(`Usage: node scripts/migrate_slides_to_backend.mjs <dir> --kind slides|photo-slides|photo-wall --service-account <key.json> [--dry-run]
 
-  <slides-dir>        local copy of the VM slides:
-                      scp -r awesomechurch@192.168.2.18:photowall/media/slides ./slides-export
-  --service-account   Firebase Admin service account JSON (writes appContent/signageSlides)
+  <dir>               local copy of the matching VM folder (slides -> media/slides,
+                      photo-slides -> media/photo-slides, photo-wall -> media/photos):
+                      scp -r awesomechurch@192.168.2.18:photowall/media/{slides,photo-slides,photos} ./export/
+  --kind              which list to migrate (default: slides)
+  --service-account   Firebase Admin service account JSON (writes the kind's appContent doc)
   --dry-run           print the plan; upload and write nothing
 
 Environment:
@@ -38,8 +49,12 @@ const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const saIndex = args.indexOf("--service-account");
 const serviceAccountPath = saIndex >= 0 ? args[saIndex + 1] : "";
-const dir = args.find((arg, i) => !arg.startsWith("--") && args[i - 1] !== "--service-account");
-if (!dir || !serviceAccountPath) usage();
+const kindIndex = args.indexOf("--kind");
+const kindName = kindIndex >= 0 ? args[kindIndex + 1] : "slides";
+const kind = KINDS[kindName];
+const dir = args.find((arg, i) => !arg.startsWith("--") && args[i - 1] !== "--service-account" && args[i - 1] !== "--kind");
+if (!dir || !serviceAccountPath || !kind) usage();
+const isPhoto = kindName !== "slides";
 
 const apiUrl = (process.env.API_URL || "").replace(/\/+$/, "");
 const token = process.env.ADMIN_ID_TOKEN || "";
@@ -58,7 +73,7 @@ if (!files.length) {
 
 const app = initializeApp({ credential: cert(JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"))) });
 const firestore = getFirestore(app);
-const docRef = firestore.collection("appContent").doc("signageSlides");
+const docRef = firestore.collection("appContent").doc(kind.doc);
 const existing = (await docRef.get()).data()?.slides || [];
 const present = new Set(existing.map(slide => slide.title));
 
@@ -66,7 +81,7 @@ async function upload(fileName) {
   const buffer = fs.readFileSync(path.join(dir, fileName));
   const form = new FormData();
   form.set("kind", "signage");
-  form.set("targetId", "slides");
+  form.set("targetId", kind.targetId);
   form.set("file", new Blob([buffer], { type: MIME[path.extname(fileName).toLowerCase()] }), fileName);
   const response = await fetch(`${apiUrl}/upload/content-image`, {
     method: "POST",
@@ -99,6 +114,9 @@ for (const fileName of files) {
     continue;
   }
   const uploaded = await upload(fileName);
+  // Photos also store width/height when the header is readable (orientation).
+  const parsed = isPhoto ? readImageSize(fs.readFileSync(path.join(dir, fileName))) : null;
+  const size = parsed ? { width: parsed.width, height: parsed.height } : {};
   console.log(`uploaded: ${title}`);
   added.push({
     id: crypto.randomUUID().replace(/-/g, "").slice(0, 12),
@@ -107,7 +125,7 @@ for (const fileName of files) {
     enabled: true,
     startAt: null,
     endAt: null,
-    durationSec: null
+    ...(isPhoto ? size : { durationSec: null })
   });
 }
 
@@ -119,7 +137,7 @@ if (dryRun) {
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: "migrate_slides_to_backend"
   }, { merge: true });
-  console.log(`wrote appContent/signageSlides: ${existing.length + added.length} slides (${added.length} new).`);
+  console.log(`wrote appContent/${kind.doc}: ${existing.length + added.length} items (${added.length} new).`);
 } else {
   console.log("nothing new to write.");
 }

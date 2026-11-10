@@ -9,11 +9,14 @@ const { cert, getApps, initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { google } = require("googleapis");
 const {
+  BACKEND_LISTS,
+  buildBackendManifestItem,
   clampDuration,
   isSlideActive,
   keyHash,
   normalizeWelcomeHeading,
-  pickDurationSec,
+  readImageSize,
+  resolveMediaSource,
   sanitizeWelcomeNames,
   welcomeRange
 } = require("./lib/signage_lib");
@@ -270,54 +273,79 @@ function slideExtension(slide) {
   return [...imageTypes.values()].includes(extension) ? extension : ".jpg";
 }
 
-// Mirror the enabled, in-window slides of appContent/signageSlides into
-// media/slides with the same signature/skip/orphan logic as syncFolder.
-// A failed download keeps the previous file when there is one; a slide with
-// nothing on disk is skipped for this round.
-async function syncBackendSlides(rawSlides, previousState, globalDurationSec, nowMs = Date.now()) {
-  const destinationDirectory = path.join(mediaRoot, "slides");
+function finiteDimension(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+// Image size for orientation: width/height on the item win, then the cached
+// value for the same signature, then the file header (read once, then cached).
+async function resolveSize(item, prior, signature, destination) {
+  const width = finiteDimension(item.width);
+  const height = finiteDimension(item.height);
+  if (width && height) return { width, height };
+  if (prior.signature === signature && prior.width && prior.height) {
+    return { width: prior.width, height: prior.height };
+  }
+  try {
+    return readImageSize(await fsp.readFile(destination));
+  } catch (error) {
+    return null;
+  }
+}
+
+// Mirror the enabled, in-window items of one backend list (slides,
+// photo-slides or photo-wall) into media/<list.dir> with the same
+// signature/skip/orphan logic as syncFolder. A failed download keeps the
+// previous file when there is one; an item with nothing on disk is skipped
+// for this round.
+async function syncBackendList(list, rawItems, previousState, globalDurationSec, nowMs = Date.now()) {
+  const destinationDirectory = path.join(mediaRoot, list.dir);
   await fsp.mkdir(destinationDirectory, { recursive: true });
 
-  const active = rawSlides.filter(slide => (
-    slide && typeof slide.id === "string" && slide.id
-    && typeof slide.url === "string" && slide.url
-    && isSlideActive(slide, nowMs)
+  const active = rawItems.filter(item => (
+    item && typeof item.id === "string" && item.id
+    && typeof item.url === "string" && item.url
+    && isSlideActive(item, nowMs)
   ));
   const currentState = {};
   const manifestItems = [];
   const keepFiles = new Set();
   const seenIds = new Set();
 
-  for (const slide of active) {
-    if (seenIds.has(slide.id)) continue;
-    seenIds.add(slide.id);
-    const key = typeof slide.key === "string" && slide.key ? slide.key : slide.url;
-    const fileName = `${safeName(slide.id, "slide")}-${keyHash(key)}${slideExtension(slide)}`;
+  for (const item of active) {
+    if (seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    const key = typeof item.key === "string" && item.key ? item.key : item.url;
+    const fileName = `${safeName(item.id, "slide")}-${keyHash(key)}${slideExtension(item)}`;
     const destination = path.join(destinationDirectory, fileName);
-    const signature = `${key}|${slide.url}`;
-    const prior = previousState[slide.id] || {};
+    const signature = `${key}|${item.url}`;
+    const prior = previousState[item.id] || {};
 
     if (prior.signature !== signature || !fs.existsSync(destination)) {
-      console.log(`Downloading backend slide: ${slide.title || slide.id}`);
+      console.log(`Downloading backend ${list.kind}: ${item.title || item.id}`);
       try {
-        await downloadUrl(slide.url, destination);
+        await downloadUrl(item.url, destination);
       } catch (error) {
-        console.error(`Could not download slide ${slide.id}:`, error.message || error);
+        console.error(`Could not download ${list.kind} ${item.id}:`, error.message || error);
         if (!fs.existsSync(destination)) continue;
       }
     }
 
     const relativePath = path.relative(root, destination).replaceAll("\\", "/");
     keepFiles.add(path.resolve(destination).toLowerCase());
-    currentState[slide.id] = { signature, path: relativePath };
-    const explicitDuration = clampDuration(slide.durationSec);
-    manifestItems.push({
-      caption: typeof slide.title === "string" && slide.title ? slide.title : slide.id,
-      image: encodeURI(relativePath),
-      slideId: slide.id,
-      artIndex: manifestItems.length,
-      ...(explicitDuration ? { durationSec: pickDurationSec(explicitDuration, globalDurationSec) } : {})
-    });
+    const size = list.kind === "slides" ? null : await resolveSize(item, prior, signature, destination);
+    currentState[item.id] = {
+      signature,
+      path: relativePath,
+      ...(size ? { width: size.width, height: size.height } : {})
+    };
+    manifestItems.push(buildBackendManifestItem(list, item, {
+      relativePath,
+      position: manifestItems.length,
+      size,
+      globalDurationSec
+    }));
   }
 
   for (const localName of await fsp.readdir(destinationDirectory)) {
@@ -428,22 +456,32 @@ async function main() {
   let photos = Array.isArray(existingContent.photos) ? existingContent.photos : [];
   let photoSlides = Array.isArray(existingContent.photoSlides) ? existingContent.photoSlides : [];
   let slides = Array.isArray(existingContent.slides) ? existingContent.slides : [];
-  const slidesSource = ((config.slides || {}).source || "drive") === "backend" ? "backend" : "drive";
-  if ((config.slides || {}).source && config.slides.source !== slidesSource) {
-    console.warn(`Unknown slides.source "${config.slides.source}"; using "drive".`);
-  }
-  const slidesDocument = firestore
-    .collection(firestoreConfig.signageCollection || firestoreConfig.collection || "appContent")
-    .doc(firestoreConfig.slidesDocument || "signageSlides");
+  const resolved = resolveMediaSource(config);
+  if (resolved.warning) console.warn(resolved.warning);
+  const mediaSource = resolved.source;
+  const signageCollection = firestoreConfig.signageCollection || firestoreConfig.collection || "appContent";
+  const docNames = {
+    "slides": firestoreConfig.slidesDocument || "signageSlides",
+    "photo-slides": firestoreConfig.photoSlidesDocument || "signagePhotoSlides",
+    "photo-wall": firestoreConfig.photoWallDocument || "signagePhotoWall"
+  };
+  // Per list: raw items[] from the last snapshot (null until one arrives).
+  const backendLists = BACKEND_LISTS.map(list => ({
+    ...list,
+    document: firestore.collection(signageCollection).doc(docNames[list.kind]),
+    docs: null,
+    running: false,
+    again: false,
+    unsubscribe: () => {},
+    timer: undefined,
+    retrySeconds: 5
+  }));
   const cardsQuery = () => firestore
     .collection(firestoreConfig.signageCollection || firestoreConfig.collection || "appContent")
     .doc("connectCards")
     .collection("cards");
   const existingWelcome = (existingContent.welcome || {}).names;
   let welcomeNames = Array.isArray(existingWelcome) ? existingWelcome : [];
-  let backendSlideDocs = null; // raw slides[] from the last snapshot; null until one arrives
-  let backendSlidesRunning = false;
-  let backendSlidesAgain = false;
   let remote = normalizeRemoteState(config);
   let syncState = readJson(statePath, {}) || {};
   let manifestQueue = Promise.resolve();
@@ -474,14 +512,12 @@ async function main() {
   }
 
 async function syncDrive() {
-    if (driveSyncRunning) return;
+    if (driveSyncRunning || mediaSource === "backend") return;
     const driveConfig = config.drive || {};
     const photosConfigured = driveConfig.photosFolderId && !driveConfig.photosFolderId.includes("PASTE_");
     const photoSlidesConfigured = driveConfig.photoSlidesFolderId && !driveConfig.photoSlidesFolderId.includes("PASTE_");
-    const slidesConfigured = slidesSource === "drive"
-      && driveConfig.slidesFolderId && !driveConfig.slidesFolderId.includes("PASTE_");
-    const slidesNeeded = slidesSource === "drive";
-    if (!photosConfigured || !photoSlidesConfigured || (slidesNeeded && !slidesConfigured)) {
+    const slidesConfigured = driveConfig.slidesFolderId && !driveConfig.slidesFolderId.includes("PASTE_");
+    if (!photosConfigured || !photoSlidesConfigured || !slidesConfigured) {
       console.log("Drive sync partial: one or more folder IDs are not configured yet.");
     }
     if (!photosConfigured && !photoSlidesConfigured && !slidesConfigured) {
@@ -517,50 +553,59 @@ async function syncDrive() {
         : { manifestItems: photoSlides, currentState: syncState.photoSlides || {} };
       photos = photoResult.manifestItems;
       photoSlides = photoSlideResult.manifestItems;
-      if (slidesSource === "drive") slides = slideResult.manifestItems;
+      slides = slideResult.manifestItems;
       syncState = {
         ...syncState,
         photos: photoResult.currentState,
         photoSlides: photoSlideResult.currentState,
-        ...(slidesSource === "drive" ? { slides: slideResult.currentState } : {})
+        slides: slideResult.currentState
       };
       await writeJsonIfChanged(statePath, syncState);
       await queueManifestWrite();
       console.log(
         `Drive sync complete: ${photos.length} wall photos, `
-        + `${photoSlides.length} photo slides, ${slides.length} announcement slides (${slidesSource})`
+        + `${photoSlides.length} photo slides, ${slides.length} announcement slides`
       );
     } finally {
       driveSyncRunning = false;
     }
   }
 
-  // Backend slide mirror. Runs on every snapshot and every tick so startAt /
-  // endAt windows open and close without waiting for a Firestore change.
-  async function syncSlidesFromBackend() {
-    if (slidesSource !== "backend" || backendSlideDocs === null) return;
-    if (backendSlidesRunning) {
-      backendSlidesAgain = true;
+  const assignList = (list, items) => {
+    if (list.manifestKey === "slides") slides = items;
+    else if (list.manifestKey === "photoSlides") photoSlides = items;
+    else photos = items;
+  };
+
+  // Backend mirror of one list. Runs on every snapshot and every tick so
+  // startAt / endAt windows open and close without waiting for a change.
+  async function syncListFromBackend(list) {
+    if (mediaSource !== "backend" || list.docs === null) return;
+    if (list.running) {
+      list.again = true;
       return;
     }
-    backendSlidesRunning = true;
+    list.running = true;
     try {
       do {
-        backendSlidesAgain = false;
-        const result = await syncBackendSlides(
-          backendSlideDocs,
-          syncState.backendSlides || {},
+        list.again = false;
+        const result = await syncBackendList(
+          list,
+          list.docs,
+          syncState[list.stateKey] || {},
           remote.slideDurationSec
         );
-        slides = result.manifestItems;
-        syncState = { ...syncState, backendSlides: result.currentState };
+        assignList(list, result.manifestItems);
+        syncState = { ...syncState, [list.stateKey]: result.currentState };
         await writeJsonIfChanged(statePath, syncState);
         await queueManifestWrite();
-      } while (backendSlidesAgain);
+      } while (list.again);
     } finally {
-      backendSlidesRunning = false;
+      list.running = false;
     }
   }
+  const syncAllFromBackend = () => Promise.all(backendLists.map(list =>
+    syncListFromBackend(list).catch(error => console.error(`Backend ${list.kind} sync failed:`, error))));
 
   // First names of expected visitors for the next 7 days (KST). Only
   // firstName and visitDate are ever copied out of the card documents. On a
@@ -588,26 +633,23 @@ async function syncDrive() {
     }
   }
 
-  let unsubscribeSlides = () => {};
-  let resubscribeSlidesTimer;
-  let resubscribeSlidesSeconds = 5;
-  function watchSlides() {
-    unsubscribeSlides = slidesDocument.onSnapshot(
+  function watchList(list) {
+    list.unsubscribe = list.document.onSnapshot(
       snapshot => {
-        resubscribeSlidesSeconds = 5;
+        list.retrySeconds = 5;
         if (!snapshot.exists) return; // keep the last mirrored set
-        const list = (snapshot.data() || {}).slides;
-        if (!Array.isArray(list)) return;
-        backendSlideDocs = list;
-        syncSlidesFromBackend().catch(error => console.error("Backend slide sync failed:", error));
+        const items = (snapshot.data() || {}).slides;
+        if (!Array.isArray(items)) return;
+        list.docs = items;
+        syncListFromBackend(list).catch(error => console.error(`Backend ${list.kind} sync failed:`, error));
       },
       error => {
         console.error(
-          `Slides listener stopped; resubscribing in ${resubscribeSlidesSeconds}s:`,
+          `${list.kind} listener stopped; resubscribing in ${list.retrySeconds}s:`,
           error
         );
-        resubscribeSlidesTimer = setTimeout(watchSlides, resubscribeSlidesSeconds * 1000);
-        resubscribeSlidesSeconds = Math.min(resubscribeSlidesSeconds * 2, 300);
+        list.timer = setTimeout(() => watchList(list), list.retrySeconds * 1000);
+        list.retrySeconds = Math.min(list.retrySeconds * 2, 300);
       }
     );
   }
@@ -637,7 +679,7 @@ async function syncDrive() {
     );
   }
   watchSignage();
-  if (slidesSource === "backend") watchSlides();
+  if (mediaSource === "backend") backendLists.forEach(watchList);
   await syncDrive();
   await refreshWelcome();
   const syncSeconds = Math.max(30, Number((config.drive || {}).syncSeconds) || 300);
@@ -648,21 +690,25 @@ async function syncDrive() {
   const tickSeconds = Math.min(60, syncSeconds);
   const tickTimer = setInterval(() => {
     refreshWelcome().catch(() => {});
-    syncSlidesFromBackend().catch(error => console.error("Backend slide sync failed:", error));
+    syncAllFromBackend();
   }, tickSeconds * 1000);
 
   console.log(
     `Watching Firestore `
     + `${firestoreConfig.signageCollection || firestoreConfig.collection || "appContent"}`
     + `/${firestoreConfig.signageDocument || firestoreConfig.document || "signage"}; `
-    + `syncing Drive every ${syncSeconds} seconds; announcement slides from ${slidesSource}.`
+    + (mediaSource === "backend"
+      ? "media (slides, photo slides, photo wall) from backend; Drive sync off."
+      : `syncing Drive every ${syncSeconds} seconds; media from drive.`)
   );
 
   function shutdown() {
     clearInterval(driveTimer);
     clearInterval(tickTimer);
-    clearTimeout(resubscribeSlidesTimer);
-    unsubscribeSlides();
+    for (const list of backendLists) {
+      clearTimeout(list.timer);
+      list.unsubscribe();
+    }
     clearTimeout(resubscribeTimer);
     unsubscribeSignage();
     process.exit();

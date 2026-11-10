@@ -188,23 +188,47 @@ python3 display_control.py --status
 Android and TV browsers require a real user tap before allowing unmuted
 audio or fullscreen; nothing remote can fake that.
 
-## 7. Announcement slides from the backend (`slides.source`)
+## 7. Slides and photos from the backend (`media.source`)
 
-Announcement slides can come from the website/admin dashboard instead of the
-Drive folder. Switch in `signage.config.json`:
+Announcement slides, the photo slideshow and the photo wall can all come from
+the website/admin dashboard instead of Google Drive. One switch in
+`signage.config.json`:
 
 ```json
-"slides": { "source": "drive" }
+"media": { "source": "drive" }
 ```
 
-- `"drive"` (default): unchanged, the *Announcement Slides* Drive folder.
-- `"backend"`: the bridge stops syncing that folder and listens to
-  Firestore `appContent/signageSlides`. Each slide that is `enabled` and
-  inside its optional `startAt`/`endAt` window is downloaded (HTTPS, 30 s
-  timeout, 3 tries) into `media/slides/<id>-<hash>.<ext>`; the TV never
-  hot-links. Windows are re-checked every minute. Removed or expired slides
-  are deleted from disk. If Firestore is unreachable the last mirrored set
-  keeps playing. Photo Wall and Photo Slideshow stay on Drive in both modes.
+The old key `"slides": { "source": ... }` still works when `media.source` is
+absent.
+
+- `"drive"` (default): unchanged, the three Drive folders.
+- `"backend"`: Drive sync is off for all three folders and the bridge listens
+  to three Firestore documents, each shaped `{ slides: [...] }`:
+
+  | Firestore doc (`appContent/`) | VM folder | `content.json` key |
+  | --- | --- | --- |
+  | `signageSlides` | `media/slides` | `slides` |
+  | `signagePhotoSlides` | `media/photo-slides` | `photoSlides` |
+  | `signagePhotoWall` | `media/photos` | `photos` |
+
+  Each item that is `enabled` and inside its optional `startAt`/`endAt`
+  window is downloaded (HTTPS, 30 s timeout, 3 tries) into
+  `media/<folder>/<id>-<hash>.<ext>`; the TV never hot-links. Windows are
+  re-checked every minute. Removed or expired items are deleted from disk. If
+  Firestore is unreachable the last mirrored set keeps playing. Items read:
+  `id`, `url`, `key`, `title`, `enabled`, `startAt`, `endAt`, `width`,
+  `height`, and for announcement slides `durationSec`.
+
+Manifest items match the Drive path (`slideId` replaces `driveId`):
+`{caption, image, slideId, artIndex, orientation}`; announcement slides have
+no `orientation` and may have `durationSec`.
+
+**Orientation** (photos only): the item's `width`/`height` are used when
+present. Otherwise the bridge reads the size from the downloaded file header
+(PNG, JPEG, GIF, WebP; no dependencies) once and caches it in
+`.signage-sync-state.json`, so it is not re-parsed every tick. Taller than
+wide is `portrait`; anything else, or an unreadable file, is `landscape`.
+EXIF rotation is not applied.
 
 Other settings from `appContent/signage` (all optional): `slideDurationSec`
 (default 9; a slide's own `durationSec` wins), `welcomeColumnEnabled`
@@ -224,29 +248,37 @@ use the full width. Needs Firestore index `cards` (collection group):
 
 ### Cutover (do on a weekday)
 
-1. Migrate the existing slides (below) or upload them in the admin dashboard.
-2. On the VM: set `"slides": { "source": "backend" }`, then
+1. Migrate the existing media (below) or upload it in the admin dashboard.
+2. On the VM: set `"media": { "source": "backend" }`, then
    `git pull --ff-only && ./start_signage.sh`. `check_signage.sh` only starts
    a bridge that is not running, so it will not pick up the new config.
-3. Watch `logs/bridge.log` for `announcement slides from backend` and a
-   `Downloading backend slide` line per slide.
+3. Watch `logs/bridge.log` for `media (slides, photo slides, photo wall) from
+   backend` and a `Downloading backend ...` line per item.
 
-**Fallback:** keep the Drive folder untouched for one week. To go back, set
+**Fallback:** keep the Drive folders untouched for one week. To go back, set
 `"source": "drive"` and run `./start_signage.sh` again; the next Drive sync
-replaces `media/slides`.
+replaces the three media folders.
 
-### Migrating the existing slides
+### Migrating the existing media
 
-On a laptop (not the VM):
+On a laptop (not the VM). Export all three folders, then run once per kind:
 
 ```bash
-scp -r awesomechurch@192.168.2.18:photowall/media/slides ./slides-export
+scp -r awesomechurch@192.168.2.18:photowall/media/{slides,photo-slides,photos} ./export/
 export API_URL=https://<backend>          # same base URL the website uses
 export ADMIN_ID_TOKEN=<Firebase ID token of an admin, valid ~1 hour>
-node scripts/migrate_slides_to_backend.mjs ./slides-export \
-  --service-account ./write-capable-service-account.json --dry-run
-# then again without --dry-run
+SA=./write-capable-service-account.json
+node scripts/migrate_slides_to_backend.mjs ./export/slides       --kind slides       --service-account $SA --dry-run
+node scripts/migrate_slides_to_backend.mjs ./export/photo-slides --kind photo-slides --service-account $SA --dry-run
+node scripts/migrate_slides_to_backend.mjs ./export/photos       --kind photo-wall   --service-account $SA --dry-run
+# then each again without --dry-run
 ```
+
+| `--kind` | export folder | upload `targetId` | Firestore doc |
+| --- | --- | --- | --- |
+| `slides` | `slides` | `slides` | `appContent/signageSlides` |
+| `photo-slides` | `photo-slides` | `photo-slides` | `appContent/signagePhotoSlides` |
+| `photo-wall` | `photos` | `photo-wall` | `appContent/signagePhotoWall` |
 
 Get the token by signing in to the website admin and running
 `await firebase.auth().currentUser.getIdToken()` in the browser console (or
@@ -254,8 +286,9 @@ Get the token by signing in to the website admin and running
 account must be able to **write** Firestore, so use an Admin one, not the
 read-only signage key. Files are ordered naturally by their original names
 (the `-<id>-<md5>` cache suffix is stripped), uploaded with `kind=signage`,
-and written as `enabled: true` with `title` = the original filename. Re-running
-skips titles already present.
+and written as `enabled: true` with `title` = the filename without extension
+and cache suffix. Photo kinds also store `width`/`height` from the file
+header. Re-running skips titles already present.
 
 Tests: `npm test` (`node --test`).
 
