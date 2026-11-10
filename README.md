@@ -152,6 +152,8 @@ Watching Firestore appContent/signage; syncing Drive every 300 seconds.
 
 Point the TV's browser at `http://<vm-lan-address>:8000/`.
 
+The server binds to `HOST` (default `0.0.0.0`, so the lobby Air can reach it over the LAN). If the browser ever runs on the same machine, set `HOST=127.0.0.1`. Malformed URLs (bad `%` escapes) get a 400.
+
 **Deploying a change**: push to this repo, then on the VM:
 
 ```bash

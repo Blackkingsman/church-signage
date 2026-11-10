@@ -2107,6 +2107,10 @@
       if (!value) return "";
       try {
         const url = new URL(value);
+        // Only https YouTube links may become an iframe source; anything else is dropped.
+        if (url.protocol !== "https:") return "";
+        const host = url.hostname.toLowerCase();
+        if (host !== "youtu.be" && !/(^|\.)youtube(-nocookie)?\.com$/.test(host)) return "";
         const autoSound = options.autoSound ?? ["auto", "kiosk"].includes(new URLSearchParams(window.location.search).get("sound"));
         const params = new URLSearchParams({
           autoplay: "1",
@@ -2119,23 +2123,24 @@
           origin: window.location.origin,
           widget_referrer: window.location.href.split("#")[0]
         });
-        if (url.hostname.includes("youtu.be")) {
+        if (host === "youtu.be") {
           const id = url.pathname.slice(1);
+          if (!id) return "";
           if (options.loop) params.set("playlist", id);
-          return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+          return `https://www.youtube.com/embed/${encodeURIComponent(id)}?${params.toString()}`;
         }
-        if (url.hostname.includes("youtube.com")) {
+        if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")) {
           const pathMatch = url.pathname.match(/^\/(?:live|embed|shorts)\/([^/?]+)/);
           const videoId = url.searchParams.get("v") || pathMatch?.[1];
           if (videoId) {
             if (options.loop) params.set("playlist", videoId);
-            return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+            return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
           }
         }
       } catch (error) {
-        return value;
+        return "";
       }
-      return value;
+      return "";
     }
 
     function sendMusicCommand(func, args = []) {
@@ -2192,6 +2197,10 @@
       }
 
       const embedUrl = youtubeEmbedUrl(musicContent.url, { autoSound: false, loop: true });
+      if (!embedUrl) {
+        musicStage.innerHTML = "";
+        return;
+      }
       musicStage.innerHTML = `
         <iframe class="music-frame" src="${escapeHtml(embedUrl)}" title="Background music" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe>
       `;
@@ -2236,7 +2245,7 @@
       const kioskSound = soundParam === "kiosk";
       const autoSound = soundParam === "auto" || kioskSound;
       const rawUrl = liveContent.embedUrl || "";
-      const hls = isHlsUrl(rawUrl);
+      const hls = isHlsUrl(rawUrl) && /^https:\/\//i.test(rawUrl);
       const embedUrl = hls ? rawUrl : youtubeEmbedUrl(rawUrl);
       const renderKey = JSON.stringify([
         embedUrl,
