@@ -600,72 +600,116 @@
       display: none;
     }
 
+    /* Three bands: wordmark at the top, the greeting and names in the middle,
+       a quiet footer at the bottom, so the column reads as one designed
+       panel rather than a box floating in the dark. */
     .has-welcome > .welcome {
       position: relative;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      justify-items: center;
       text-align: center;
-      gap: clamp(8px, 1.2vh, 18px);
       height: 100vh;
       overflow: hidden;
-      padding: clamp(28px, 3.2vw, 64px) clamp(20px, 2.4vw, 48px);
-      color: #fffdf8;
-      background: linear-gradient(180deg, #1c1815 0%, #121010 100%);
-      border-left: 1px solid rgba(239,200,111,.22);
-      box-shadow: inset 18px 0 40px -28px rgba(0,0,0,.9);
+      padding: clamp(28px, 4.4vh, 64px) clamp(22px, 2.4vw, 48px);
+      color: #fffaf0;
+      background:
+        radial-gradient(120% 60% at 50% 0%, rgba(239,200,111,.20), transparent 60%),
+        radial-gradient(90% 50% at 50% 100%, rgba(214,120,72,.14), transparent 70%),
+        linear-gradient(180deg, #221a14 0%, #15110e 55%, #0f0c0a 100%);
     }
 
-    /* Soft gold glow at the top of the panel; gives the column a "lit" feel
-       without competing with the slide next to it. */
+    /* A thin gold rule down the seam instead of a hard border. */
     .has-welcome > .welcome::before {
       content: "";
       position: absolute;
-      inset: 0;
-      background: radial-gradient(ellipse at 50% 0%, rgba(239,200,111,.18), transparent 55%);
+      top: 8%;
+      bottom: 8%;
+      left: 0;
+      width: 2px;
+      background: linear-gradient(180deg, transparent, rgba(239,200,111,.7), transparent);
       pointer-events: none;
     }
 
     .welcome > * { position: relative; }
 
+    .welcome-brand {
+      margin: 0;
+      font-size: clamp(.72rem, .9vw, 1.1rem);
+      font-weight: 700;
+      letter-spacing: .38em;
+      text-transform: uppercase;
+      color: rgba(255,250,240,.55);
+    }
+
+    .welcome-main {
+      align-self: center;
+      display: grid;
+      justify-items: center;
+      gap: clamp(6px, 1vh, 14px);
+      width: 100%;
+    }
+
     .welcome-eyebrow {
       margin: 0;
-      font-size: clamp(.8rem, 1.05vw, 1.3rem);
-      letter-spacing: .26em;
+      font-size: clamp(.78rem, 1vw, 1.25rem);
+      font-weight: 600;
+      letter-spacing: .3em;
       text-transform: uppercase;
-      color: rgba(239,200,111,.85);
+      color: #efc86f;
     }
 
     .welcome-heading {
       margin: 0;
-      font-size: clamp(2.4rem, 3.9vw, 5rem);
-      line-height: 1.02;
-      font-weight: 800;
-      letter-spacing: -.01em;
-      color: #efc86f;
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic;
+      font-weight: 400;
+      font-size: clamp(2.6rem, 3.9vw, 5rem);
+      line-height: 1;
+      padding: 0 .12em; /* room for the italic overhang */
+      letter-spacing: -.02em;
+      color: #fffaf0;
     }
 
     .welcome-heading-ko {
-      margin-top: .1em;
-      font-size: clamp(1.5rem, 2.3vw, 3rem);
-      font-weight: 600;
-      color: rgba(255,253,248,.85);
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      font-style: normal;
+      font-size: clamp(1.3rem, 2vw, 2.6rem);
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: #efc86f;
     }
 
     .welcome-rule {
-      width: clamp(40px, 4vw, 72px);
-      height: 2px;
-      margin: clamp(6px, 1vh, 14px) auto;
-      background: linear-gradient(90deg, transparent, #efc86f, transparent);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 70%;
+      margin: clamp(10px, 2vh, 26px) auto clamp(6px, 1vh, 12px);
+      color: #efc86f;
+      font-size: clamp(.8rem, 1vw, 1.2rem);
+    }
+
+    .welcome-rule::before,
+    .welcome-rule::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(239,200,111,.65));
+    }
+
+    .welcome-rule::after {
+      background: linear-gradient(90deg, rgba(239,200,111,.65), transparent);
     }
 
     .welcome-date {
-      margin: 0;
-      font-size: clamp(.9rem, 1.15vw, 1.4rem);
-      letter-spacing: .14em;
+      margin: clamp(6px, 1vh, 12px) 0 0;
+      font-size: clamp(.8rem, 1vw, 1.25rem);
+      font-weight: 600;
+      letter-spacing: .22em;
       text-transform: uppercase;
-      color: rgba(255,253,248,.6);
+      color: rgba(255,250,240,.5);
     }
 
     .welcome-names {
@@ -673,72 +717,101 @@
       padding: 0;
       list-style: none;
       display: grid;
-      gap: clamp(8px, 1.2vh, 16px);
+      gap: clamp(4px, 1vh, 14px);
       width: 100%;
-      max-width: 92%;
     }
 
     .welcome-names li {
-      font-size: clamp(1.6rem, 2.9vw, 3.6rem);
-      line-height: 1.1;
-      padding: clamp(8px, 1.1vh, 16px) clamp(12px, 1.2vw, 22px);
-      border-radius: 18px;
-      background: rgba(255,253,248,.06);
-      border: 1px solid rgba(255,253,248,.1);
+      display: grid;
+      justify-items: center;
+      padding: clamp(4px, .8vh, 10px) 0;
+      font-size: clamp(1.9rem, 3.3vw, 4.2rem);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -.01em;
       overflow-wrap: anywhere;
-      animation: welcome-in .7s ease both;
+      animation: welcome-in .8s cubic-bezier(.2,.7,.2,1) both;
     }
 
-    /* Many names: two columns, smaller cards, so nobody falls off the screen. */
+    /* A short gold underline under each name, drawn in after the name. */
+    .welcome-names li::after {
+      content: "";
+      width: 1.1em;
+      height: 3px;
+      margin-top: .22em;
+      border-radius: 3px;
+      background: #efc86f;
+      opacity: .85;
+    }
+
     .welcome-names.is-dense {
       grid-template-columns: 1fr 1fr;
-      gap: clamp(6px, .9vh, 12px) clamp(8px, .8vw, 16px);
+      gap: clamp(2px, .6vh, 8px) clamp(8px, .8vw, 16px);
     }
 
     .welcome-names.is-dense li {
-      font-size: clamp(1.2rem, 2vw, 2.4rem);
-      padding: clamp(6px, .9vh, 12px) clamp(10px, 1vw, 16px);
+      font-size: clamp(1.25rem, 2vw, 2.5rem);
     }
 
-    /* Families get a warmer card: the family name large, "Family" as a small
-       caption underneath, so the card stays one tidy block. */
+    /* "The Jung" on one line, "Family" under it, then the underline. */
     .welcome-names li.is-family {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      grid-template-columns: auto auto;
+      justify-content: center;
+      align-items: baseline;
+      column-gap: .22em;
       line-height: 1;
-      background: rgba(239,200,111,.1);
-      border-color: rgba(239,200,111,.28);
+    }
+
+    .welcome-names li.is-family .welcome-family,
+    .welcome-names li.is-family::after {
+      grid-column: 1 / -1;
+      justify-self: center;
+    }
+
+    .welcome-the {
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic;
+      font-weight: 400;
+      font-size: .5em;
+      color: rgba(255,250,240,.7);
     }
 
     .welcome-family {
-      margin-top: .18em;
-      font-size: .42em;
-      font-weight: 600;
-      letter-spacing: .22em;
-      text-transform: uppercase;
-      color: rgba(239,200,111,.85);
+      margin-top: .12em;
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic;
+      font-weight: 400;
+      font-size: .55em;
+      color: #efc86f;
     }
 
     .welcome-more {
       margin: 0;
       font-size: clamp(1rem, 1.5vw, 1.8rem);
-      color: rgba(255,253,248,.6);
+      color: rgba(255,250,240,.6);
     }
 
     .welcome-footer {
-      margin: clamp(6px, 1.4vh, 20px) 0 0;
+      margin: 0;
       max-width: 100%;
-      font-size: clamp(.9rem, 1.1vw, 1.35rem);
+      display: grid;
+      gap: 2px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(1rem, 1.25vw, 1.6rem);
       font-style: italic;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      color: rgba(255,253,248,.55);
+      color: rgba(255,250,240,.75);
+    }
+
+    .welcome-footer span {
+      font-family: Inter, Arial, sans-serif;
+      font-style: normal;
+      font-size: .8em;
+      letter-spacing: .08em;
+      color: rgba(239,200,111,.85);
     }
 
     @keyframes welcome-in {
-      from { opacity: 0; transform: translateY(10px); }
+      from { opacity: 0; transform: translateY(14px); }
       to { opacity: 1; transform: none; }
     }
 
@@ -1588,24 +1661,28 @@
       // A party of two or more with a family name is greeted as a family:
       // "The Kim Family", or "김 가족" when the name is written in Hangul.
       const label = item => {
-        if (!item.family) return escapeHtml(item.firstName);
+        if (!item.family) return `<span class="welcome-name">${escapeHtml(item.firstName)}</span>`;
         const hangul = /[ᄀ-ᇿ㄰-㆏가-힯]/.test(item.family);
-        return `<span class="welcome-name">${escapeHtml(item.family)}</span>`
-          + `<span class="welcome-family">${hangul ? "가족" : "Family"}</span>`;
+        return hangul
+          ? `<span class="welcome-name">${escapeHtml(item.family)}</span><span class="welcome-family">가족</span>`
+          : `<span class="welcome-the">The</span><span class="welcome-name">${escapeHtml(item.family)}</span><span class="welcome-family">Family</span>`;
       };
       const nameItem = item =>
         `<li${item.family ? ' class="is-family"' : ""} style="animation-delay:${Math.min(index++, 11) * 90}ms">${label(item)}</li>`;
       return `
-        <p class="welcome-eyebrow">${multiple ? "Coming up" : "This Sunday"}</p>
-        ${welcomeContent.heading.en ? `<h2 class="welcome-heading">${escapeHtml(welcomeContent.heading.en)}</h2>` : ""}
-        ${welcomeContent.heading.ko ? `<h3 class="welcome-heading welcome-heading-ko">${escapeHtml(welcomeContent.heading.ko)}</h3>` : ""}
-        <div class="welcome-rule" aria-hidden="true"></div>
-        ${groups.map(group => `
-          <p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>
-          <ul class="welcome-names${dense ? " is-dense" : ""}">${group.items.map(nameItem).join("")}</ul>
-        `).join("")}
-        ${extra > 0 ? `<p class="welcome-more">+${extra} more</p>` : ""}
-        <p class="welcome-footer">We're glad you're here · 반가워요</p>
+        <p class="welcome-brand">Awesome Church</p>
+        <div class="welcome-main">
+          <p class="welcome-eyebrow">${multiple ? "Coming up" : "This Sunday"}</p>
+          ${welcomeContent.heading.en ? `<h2 class="welcome-heading">${escapeHtml(welcomeContent.heading.en)}</h2>` : ""}
+          ${welcomeContent.heading.ko ? `<h3 class="welcome-heading welcome-heading-ko">${escapeHtml(welcomeContent.heading.ko)}</h3>` : ""}
+          <div class="welcome-rule" aria-hidden="true">✦</div>
+          ${groups.map(group => `
+            ${multiple ? `<p class="welcome-date">${escapeHtml(welcomeDateLabel(group.date))}</p>` : ""}
+            <ul class="welcome-names${dense ? " is-dense" : ""}">${group.items.map(nameItem).join("")}</ul>
+          `).join("")}
+          ${extra > 0 ? `<p class="welcome-more">+${extra} more</p>` : ""}
+        </div>
+        <p class="welcome-footer">We're so glad you're here<span>반가워요</span></p>
       `;
     }
 
